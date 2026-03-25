@@ -1,0 +1,1879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LabScope — Institutional Testing Classifier</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface2: #eef1f5;
+    --border: #dde2ea;
+    --accent: #0b7a5e;
+    --accent2: #1a6fc4;
+    --accent3: #d95f1a;
+    --text: #1a2030;
+    --text-muted: #6b7a92;
+    --text-dim: #b0bac8;
+    --solid-tumor: #d95f1a;
+    --breast-gi-lung: #c4195e;
+    --hematology: #7c3aed;
+    --infectious: #0b7a5e;
+    --ngs: #1a6fc4;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* GRID BACKGROUND */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.3;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+
+  /* HEADER */
+  header {
+    padding: 40px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .logo-name {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+
+  .logo-name span {
+    color: var(--accent);
+  }
+
+  .logo-tag {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    padding: 3px 8px;
+  }
+
+  .header-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* LEGEND */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+  }
+
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* MODE TABS */
+  .mode-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  .mode-tab {
+    padding: 11px 24px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    background: var(--surface2);
+    color: var(--text-muted);
+    margin-right: -1px;
+    transition: all 0.15s;
+  }
+  .mode-tab.active {
+    background: var(--surface);
+    color: var(--accent);
+    border-color: var(--border);
+    border-bottom: 1px solid var(--surface);
+    margin-bottom: -1px;
+    z-index: 1;
+  }
+  .mode-tab:hover:not(.active) { color: var(--text); background: var(--surface); }
+  .mode-panel {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: none;
+    padding: 32px;
+    margin-bottom: 32px;
+  }
+  .mode-panel.active { display: block; }
+
+  /* SINGLE ENTRY */
+  .single-entry-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 600px) { .single-entry-grid { grid-template-columns: 1fr; } }
+  .single-entry-grid input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    padding: 11px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .single-entry-grid input:focus { border-color: var(--accent); }
+  .single-entry-grid input::placeholder { color: var(--text-dim); }
+
+  /* UPLOAD ZONE */
+  .upload-section {
+    margin-bottom: 40px;
+  }
+
+  .upload-zone {
+    border: 1px dashed var(--border);
+    background: var(--surface);
+    padding: 48px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .upload-zone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent 40%, rgba(11,122,94,0.03) 100%);
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(11,122,94,0.04);
+  }
+
+  .upload-icon {
+    font-size: 32px;
+    margin-bottom: 16px;
+    display: block;
+  }
+
+  .upload-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .upload-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  .upload-sub strong {
+    color: var(--accent);
+  }
+
+  #fileInput { display: none; }
+
+  .btn-upload {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 10px 24px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+
+  .btn-upload:hover {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  /* CONFIG PANEL */
+  .config-panel {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 28px;
+    margin-bottom: 32px;
+  }
+
+  .config-panel.visible { display: block; }
+
+  .config-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+  }
+
+  .config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+
+  .config-field label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .config-field select,
+  .config-field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .config-field select:focus,
+  .config-field input:focus {
+    border-color: var(--accent);
+  }
+
+  .preview-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .preview-chip {
+    padding: 4px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .lab-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  .btn-run {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: var(--accent);
+    color: var(--bg);
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-run:hover { background: #0d9970; }
+  .btn-run:disabled { background: var(--border); color: var(--text-muted); cursor: not-allowed; }
+
+  .btn-stop {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: transparent;
+    color: #cc2222;
+    border: 2px solid #cc2222;
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+  .btn-stop.visible { display: inline-flex; }
+  .btn-stop:hover { background: #cc2222; color: #fff; }
+
+  /* PROGRESS */
+  .progress-section {
+    display: none;
+    margin-bottom: 32px;
+  }
+
+  .progress-section.visible { display: block; }
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .progress-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+  }
+
+  .progress-count {
+    font-size: 12px;
+    color: var(--accent);
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+  }
+
+  .progress-bar-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    height: 4px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.4s ease;
+    width: 0%;
+    position: relative;
+  }
+
+  .progress-bar::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 40px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6));
+  }
+
+  .log-feed {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px;
+    height: 160px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.8;
+  }
+
+  .log-line { display: flex; gap: 12px; }
+  .log-time { color: var(--text-dim); flex-shrink: 0; }
+  .log-text.ok { color: var(--accent); }
+  .log-text.warn { color: var(--accent3); }
+  .log-text.info { color: var(--accent2); }
+  .log-text.err { color: #cc2222; }
+
+  /* RESULTS */
+  .results-section { display: none; }
+  .results-section.visible { display: block; }
+
+  .results-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .results-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+
+  .results-title span {
+    color: var(--accent);
+  }
+
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .filter-btn {
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .filter-btn:hover { border-color: var(--text-muted); color: var(--text); }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0,229,160,0.06); }
+
+  .btn-export {
+    padding: 8px 20px;
+    background: transparent;
+    border: 1px solid var(--accent2);
+    color: var(--accent2);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+
+  .btn-export:hover { background: var(--accent2); color: var(--bg); }
+
+  /* LAB CARDS */
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
+    gap: 20px;
+  }
+
+  @media (max-width: 700px) {
+    .cards-grid { grid-template-columns: 1fr; }
+    .config-grid { grid-template-columns: 1fr; }
+  }
+
+  .lab-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    transition: border-color 0.2s;
+    position: relative;
+  }
+
+  .lab-card:hover { border-color: #b0bac8; }
+
+  .lab-card-accent {
+    height: 3px;
+    background: var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .lab-card.has-results .lab-card-accent {
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+  }
+
+  .lab-card-head {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .lab-name {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.3;
+  }
+
+  .lab-location {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .lab-status-badge {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .badge-processing { background: rgba(0,144,255,0.1); border: 1px solid rgba(0,144,255,0.3); color: var(--accent2); }
+  .badge-done { background: rgba(0,229,160,0.08); border: 1px solid rgba(0,229,160,0.25); color: var(--accent); }
+  .badge-error { background: rgba(204,34,34,0.07); border: 1px solid rgba(204,34,34,0.2); color: #cc2222; }
+  .badge-pass1 { background: rgba(26,111,196,0.07); border: 1px solid rgba(26,111,196,0.2); color: var(--accent2); }
+  .badge-pending { background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim); }
+
+  .lab-card-body { padding: 20px 24px; }
+
+  /* TESTING TAGS */
+  .testing-row {
+    margin-bottom: 16px;
+  }
+
+  .testing-row-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .tags-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .tag {
+    padding: 4px 10px;
+    font-size: 11px;
+    border: 1px solid;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .tag-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+
+  .tag-solid-tumor { border-color: rgba(255,107,53,0.4); color: var(--solid-tumor); background: rgba(255,107,53,0.07); }
+  .tag-solid-tumor .tag-dot { background: var(--solid-tumor); }
+
+  .tag-breast-gi-lung { border-color: rgba(255,61,127,0.4); color: var(--breast-gi-lung); background: rgba(255,61,127,0.07); }
+  .tag-breast-gi-lung .tag-dot { background: var(--breast-gi-lung); }
+
+  .tag-hematology { border-color: rgba(168,85,247,0.4); color: var(--hematology); background: rgba(168,85,247,0.07); }
+  .tag-hematology .tag-dot { background: var(--hematology); }
+
+  .tag-infectious { border-color: rgba(0,229,160,0.4); color: var(--infectious); background: rgba(0,229,160,0.07); }
+  .tag-infectious .tag-dot { background: var(--infectious); }
+
+  .tag-ngs { border-color: rgba(0,144,255,0.4); color: var(--ngs); background: rgba(0,144,255,0.07); }
+  .tag-ngs .tag-dot { background: var(--ngs); }
+
+  .tag-none { border-color: var(--border); color: var(--text-dim); background: transparent; font-style: italic; }
+
+  /* NGS PLATFORM */
+  .ngs-platform {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    background: rgba(26,111,196,0.05);
+    border: 1px solid rgba(26,111,196,0.15);
+  }
+
+  .ngs-platform-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--accent2);
+    margin-bottom: 4px;
+  }
+
+  .ngs-platform-value {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  /* CONTACTS */
+  .contacts-section { margin-top: 8px; }
+
+  .contacts-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .contact-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: start;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .contact-item:last-child { border-bottom: none; }
+
+  .contact-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+
+  .contact-title {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+
+  .contact-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .contact-detail {
+    font-size: 11px;
+    color: var(--accent2);
+    text-decoration: none;
+    letter-spacing: 0.2px;
+  }
+
+  .contact-detail:hover { text-decoration: underline; }
+  .contact-detail.phone { color: var(--accent); }
+  .contact-detail.na { color: var(--text-dim); font-style: italic; }
+
+  /* SUMMARY STATS */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    margin-bottom: 32px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  @media (max-width: 800px) {
+    .stats-bar { grid-template-columns: repeat(3, 1fr); }
+  }
+
+  .stat-cell {
+    background: var(--surface);
+    padding: 20px;
+    text-align: center;
+  }
+
+  .stat-num {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    line-height: 1.4;
+  }
+
+  /* SPINNER */
+  .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(11,122,94,0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* NOTES BOX */
+  .note-box {
+    background: rgba(26,111,196,0.05);
+    border: 1px solid rgba(26,111,196,0.15);
+    padding: 14px 18px;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.7;
+    margin-bottom: 32px;
+  }
+
+  .note-box strong { color: var(--accent2); }
+
+  /* SOURCES */
+  .sources-row {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+  }
+
+  .sources-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .source-link {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-decoration: none;
+    margin-right: 10px;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 280px;
+  }
+
+  .source-link:hover { color: var(--accent2); }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+  ::-webkit-scrollbar-thumb:hover { background: #b0bac8; }
+
+  .hidden { display: none !important; }
+
+  /* EMPTY STATE */
+  .empty-state {
+    text-align: center;
+    padding: 60px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .empty-state-icon { font-size: 36px; margin-bottom: 16px; }
+
+  footer {
+    margin-top: 80px;
+    padding: 32px 0;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-name">Lab<span>Scope</span></span>
+        <span class="logo-tag">Testing Classifier</span>
+      </div>
+      <div class="header-status">
+        <span class="status-dot"></span>
+        <span>AI-POWERED · REAL-TIME SEARCH</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--solid-tumor)"></div>Solid Tumor (General)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--breast-gi-lung)"></div>Solid Tumor (Breast/GI/Lung)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--hematology)"></div>Hematology</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--infectious)"></div>16S rRNA / Infectious Disease</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--ngs)"></div>NGS Platform</div>
+  </div>
+
+  <div class="note-box">
+    <strong>How it works:</strong> Upload an Excel (.xlsx/.xls) or CSV file containing lab/institution names. LabScope will use AI with web search to look up each institution's testing capabilities, identify relevant contacts, and detect NGS platform usage. Results depend on publicly available information. For best results, include institution full names and locations in your file.
+  </div>
+
+  <!-- API KEY -->
+  <div id="apiKeyPanel" style="margin-bottom:28px;background:var(--surface);border:1px solid var(--border);padding:20px 24px;display:flex;flex-direction:column;gap:16px;">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:240px;">
+        <div style="font-size:11px;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Anthropic API Key</div>
+        <input id="apiKeyInput" type="password" placeholder="sk-ant-... (required when running outside claude.ai)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:10px 12px;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'">
+      </div>
+      <div style="flex:1;min-width:240px;">
+        <div style="font-size:11px;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Prospeo API Key <span style="font-size:10px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(optional — email enrichment)</span></div>
+        <input id="prospeoKeyInput" type="password" placeholder="Paste Prospeo key for contact email lookup" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:10px 12px;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='var(--accent2)'" onblur="this.style.borderColor='var(--border)'">
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);line-height:1.8;">
+      <strong style="color:var(--text-muted)">Anthropic key:</strong> Leave blank on claude.ai (auto-injected) or localhost (read from server). Required on other hosted environments. &nbsp;·&nbsp;
+      <strong style="color:var(--text-muted)">Prospeo key:</strong> Get free at <a href="https://prospeo.io" target="_blank" style="color:var(--accent2);">prospeo.io</a> (75 free searches/month). Used after both AI passes to fill in any missing contact emails.
+    </div>
+  </div>
+
+  <!-- MODE TABS -->
+  <div class="mode-tabs">
+    <button class="mode-tab active" id="tabSingle" onclick="switchMode('single')">Single Institution</button>
+    <button class="mode-tab" id="tabBulk" onclick="switchMode('bulk')">Bulk Upload</button>
+  </div>
+
+  <!-- SINGLE ENTRY PANEL -->
+  <div class="mode-panel active" id="panelSingle">
+    <div class="single-entry-grid">
+      <input type="text" id="singleName" placeholder="Institution / Lab name (required)" autocomplete="off">
+      <input type="text" id="singleLocation" placeholder="Location (optional)" autocomplete="off">
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <button class="btn-run" id="runBtnSingle" onclick="runSingle()">
+        <span>▶ Run Analysis</span>
+      </button>
+      <button class="btn-stop" id="stopBtnSingle" onclick="stopAnalysis()">
+        <span>■ Stop</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- BULK UPLOAD PANEL -->
+  <div class="mode-panel" id="panelBulk">
+    <div class="upload-zone" id="uploadZone" style="margin-bottom:24px;">
+      <span class="upload-icon">🧬</span>
+      <div class="upload-title">Upload Institution List</div>
+      <div class="upload-sub">
+        Drag & drop your Excel or CSV file here, or click to browse.<br>
+        <strong>Required column:</strong> Institution/Lab name · Optional: Location, Website, Notes
+      </div>
+      <button class="btn-upload" onclick="document.getElementById('fileInput').click()">Choose File</button>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+    </div>
+    <div id="configInner" style="display:none;">
+      <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-muted);margin-bottom:20px;">⚙ Configuration</div>
+      <div class="config-grid">
+        <div class="config-field">
+          <label>Name Column</label>
+          <select id="nameCol"></select>
+        </div>
+        <div class="config-field">
+          <label>Location Column (optional)</label>
+          <select id="locCol"></select>
+        </div>
+      </div>
+      <div class="lab-count" id="labCount"></div>
+      <div class="preview-list" id="previewList"></div>
+      <br>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <button class="btn-run" id="runBtn" onclick="runAnalysis()">
+          <span>▶ Run Analysis</span>
+        </button>
+        <button class="btn-stop" id="stopBtn" onclick="stopAnalysis()">
+          <span>■ Stop</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="progress-section" id="progressSection">
+    <div class="progress-header">
+      <span class="progress-label">ANALYZING INSTITUTIONS</span>
+      <span class="progress-count" id="progressCount">0 / 0</span>
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <div class="log-feed" id="logFeed"></div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="results-section" id="resultsSection">
+    <div class="stats-bar" id="statsBar"></div>
+
+    <div class="results-toolbar">
+      <div class="results-title">Results <span id="resultsCountLabel"></span></div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <div class="filter-bar" id="filterBar">
+          <button class="filter-btn active" data-filter="all" onclick="applyFilter('all',this)">ALL</button>
+          <button class="filter-btn" data-filter="solid_tumor" onclick="applyFilter('solid_tumor',this)">SOLID TUMOR</button>
+          <button class="filter-btn" data-filter="breast_gi_lung" onclick="applyFilter('breast_gi_lung',this)">BREAST/GI/LUNG</button>
+          <button class="filter-btn" data-filter="hematology" onclick="applyFilter('hematology',this)">HEMATOLOGY</button>
+          <button class="filter-btn" data-filter="infectious" onclick="applyFilter('infectious',this)">16S/INFECTIOUS</button>
+          <button class="filter-btn" data-filter="ngs" onclick="applyFilter('ngs',this)">NGS</button>
+        </div>
+        <button class="btn-export" onclick="exportResults()">⬇ Export Excel</button>
+      </div>
+    </div>
+
+    <div class="cards-grid" id="cardsGrid"></div>
+  </div>
+
+  <footer>
+    <span>LabScope — Institutional Testing Classifier</span>
+    <span>Powered by Claude AI · Data from public sources</span>
+  </footer>
+</div>
+
+<script>
+// ---- STATE ----
+let parsedData = [];
+let headers = [];
+let results = [];
+let currentFilter = 'all';
+let stopRequested = false;
+
+// ---- FILE HANDLING ----
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+uploadZone.addEventListener('click', e => { if (e.target !== document.querySelector('.btn-upload')) fileInput.click(); });
+
+function handleFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.csv')) {
+    const reader = new FileReader();
+    reader.onload = e => parseCSV(e.target.result);
+    reader.readAsText(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, { type: 'binary' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (data.length < 2) return alert('File appears empty.');
+      headers = data[0].map(h => String(h).trim());
+      parsedData = data.slice(1).filter(r => r.some(c => c !== ''));
+      setupConfig();
+    };
+    reader.readAsBinaryString(file);
+  }
+}
+
+function parseCSV(text) {
+  const rows = text.split('\n').map(r => r.split(',').map(c => c.replace(/^"|"$/g,'').trim()));
+  if (rows.length < 2) return alert('File appears empty.');
+  headers = rows[0];
+  parsedData = rows.slice(1).filter(r => r.some(c => c !== ''));
+  setupConfig();
+}
+
+function setupConfig() {
+  const nameCol = document.getElementById('nameCol');
+  const locCol = document.getElementById('locCol');
+  nameCol.innerHTML = '';
+  locCol.innerHTML = '<option value="">-- None --</option>';
+  headers.forEach((h, i) => {
+    const opt1 = new Option(h || `Column ${i+1}`, i);
+    const opt2 = new Option(h || `Column ${i+1}`, i);
+    nameCol.appendChild(opt1);
+    locCol.appendChild(opt2);
+  });
+  // Auto-detect
+  const nameIdx = headers.findIndex(h => /name|institution|lab|org|facility/i.test(h));
+  const locIdx = headers.findIndex(h => /loc|city|state|address|country/i.test(h));
+  if (nameIdx >= 0) nameCol.value = nameIdx;
+  if (locIdx >= 0) locCol.value = locIdx;
+
+  document.getElementById('labCount').textContent = `${parsedData.length} institutions found in file`;
+  const preview = document.getElementById('previewList');
+  preview.innerHTML = parsedData.slice(0, 8).map(r => {
+    const val = r[nameCol.value] || r[0] || '';
+    return `<span class="preview-chip">${String(val).substring(0,35)}</span>`;
+  }).join('') + (parsedData.length > 8 ? `<span class="preview-chip">+${parsedData.length-8} more</span>` : '');
+
+  document.getElementById('configInner').style.display = 'block';
+  // update preview when col changes
+  nameCol.onchange = () => {
+    preview.innerHTML = parsedData.slice(0,8).map(r => {
+      const val = r[nameCol.value] || r[0] || '';
+      return `<span class="preview-chip">${String(val).substring(0,35)}</span>`;
+    }).join('') + (parsedData.length > 8 ? `<span class="preview-chip">+${parsedData.length-8} more</span>` : '');
+  };
+}
+
+// ---- LOGGING ----
+function log(text, type = 'info') {
+  const feed = document.getElementById('logFeed');
+  const now = new Date();
+  const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${t}</span><span class="log-text ${type}">${text}</span>`;
+  feed.appendChild(line);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ---- MODE SWITCHING ----
+function switchMode(mode) {
+  document.getElementById('tabSingle').classList.toggle('active', mode === 'single');
+  document.getElementById('tabBulk').classList.toggle('active', mode === 'bulk');
+  document.getElementById('panelSingle').classList.toggle('active', mode === 'single');
+  document.getElementById('panelBulk').classList.toggle('active', mode === 'bulk');
+}
+
+// ---- SINGLE INSTITUTION RUN ----
+async function runSingle() {
+  const name = document.getElementById('singleName').value.trim();
+  if (!name) {
+    document.getElementById('singleName').focus();
+    document.getElementById('singleName').style.borderColor = '#cc2222';
+    setTimeout(() => document.getElementById('singleName').style.borderColor = '', 1500);
+    return;
+  }
+  const location = document.getElementById('singleLocation').value.trim();
+  // Feed into the shared pipeline as a one-item institutions array
+  await runPipeline([{ name, location }],
+    document.getElementById('runBtnSingle'),
+    document.getElementById('stopBtnSingle')
+  );
+}
+
+// ---- ANALYSIS ----
+async function runAnalysis() {
+  const nameColIdx = parseInt(document.getElementById('nameCol').value);
+  const locColIdx = document.getElementById('locCol').value !== '' ? parseInt(document.getElementById('locCol').value) : null;
+  if (isNaN(nameColIdx)) return alert('Please select the name column.');
+  const institutions = parsedData.map(r => ({
+    name: String(r[nameColIdx] || '').trim(),
+    location: locColIdx !== null ? String(r[locColIdx] || '').trim() : ''
+  })).filter(i => i.name);
+  if (institutions.length === 0) return alert('No institution names found.');
+  await runPipeline(institutions,
+    document.getElementById('runBtn'),
+    document.getElementById('stopBtn')
+  );
+}
+
+// ---- SHARED ANALYSIS PIPELINE ----
+async function runPipeline(institutions, runBtn, stopBtn) {
+  stopRequested = false;
+  runBtn.disabled = true;
+  stopBtn.classList.add('visible');
+  stopBtn.disabled = false;
+  stopBtn.innerHTML = '<span>■ Stop</span>';
+  document.getElementById('progressSection').classList.add('visible');
+  document.getElementById('resultsSection').classList.remove('visible');
+  document.getElementById('logFeed').innerHTML = '';
+  results = [];
+
+  const maxRetries = 3;
+
+  log(`Starting analysis of ${institutions.length} institutions (2 passes each)`, 'info');
+
+  async function runWithRetry(fn, label) {
+    let retries = 0;
+    while (retries <= maxRetries) {
+      if (stopRequested) return null;
+      try {
+        return await fn();
+      } catch (err) {
+        const errStr = err.message || String(err);
+        let rateLimitResetMs = null;
+        try {
+          let outer = JSON.parse(errStr);
+          let inner = outer;
+          if (typeof outer.message === 'string') {
+            try { inner = JSON.parse(outer.message); } catch(_) {}
+          }
+          const resetsAt = inner.resetsAt || outer.resetsAt;
+          if (resetsAt) rateLimitResetMs = resetsAt * 1000;
+        } catch (_) {}
+
+        if (rateLimitResetMs) {
+          log(`⏳ Rate limit hit. Waiting 60s before retrying ${label}…`, 'warn');
+          await interruptibleSleep(60000);
+          retries++;
+        } else if (retries < maxRetries) {
+          // Check if it's a 429 token-per-minute limit (has http_status 429 but no resetsAt)
+          let is429 = false;
+          try { is429 = JSON.parse(errStr).http_status === 429; } catch(_) {}
+          const backoff = is429 ? 60000 : 3000 * (retries + 1);
+          const backoffLabel = is429 ? '60s (token rate limit)' : `${backoff/1000}s`;
+          log(`↺ ${label} — retrying in ${backoffLabel} (attempt ${retries+1}/${maxRetries}) — error: ${errStr}`, 'warn');
+          await interruptibleSleep(backoff);
+          retries++;
+        } else {
+          log(`✗ ${label} — failed after ${maxRetries} retries: ${errStr}`, 'err');
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  for (let i = 0; i < institutions.length; i++) {
+    if (stopRequested) break;
+    const inst = institutions[i];
+    updateProgress(i, institutions.length);
+
+    // ---- PASS 1 ----
+    log(`[1/2] ${inst.name} — broad search…`, 'info');
+    const pass1 = await runWithRetry(
+      () => analyzeInstitution(inst.name, inst.location),
+      `${inst.name} pass 1`
+    );
+
+    if (!pass1) {
+      results.push({ ...inst, status: 'error', solid_tumor: false, breast_gi_lung: false, hematology: false, infectious: false, does_ngs: false, ngs_platform: '', contacts: [] });
+      updateProgress(i + 1, institutions.length);
+      if (i < institutions.length - 1 && !stopRequested) await interruptibleSleep(5000);
+      continue;
+    }
+
+    // Show pass 1 result immediately so user sees progress
+    results.push({ ...inst, ...pass1, status: 'pass1' });
+    renderResults();
+    log(`[1/2] ${inst.name} — pass 1 complete, starting deep search…`, 'ok');
+
+    if (stopRequested) break;
+
+    // Brief pause between passes
+    await interruptibleSleep(3000);
+
+    // ---- PASS 2 ----
+    log(`[2/2] ${inst.name} — targeted gap-fill search…`, 'info');
+    const pass2 = await runWithRetry(
+      () => refineInstitution(inst.name, inst.location, pass1),
+      `${inst.name} pass 2`
+    );
+
+    // Merge pass 2 into pass 1, preferring non-empty/non-N/A values from pass 2
+    const merged = mergeResults(pass1, pass2);
+
+    // Prospeo: fill any remaining missing emails after both AI passes
+    if (getProspeoKey()) {
+      const needsEnrichment = (merged.contacts || []).some(
+        ct => (!ct.email || ct.email === 'N/A') && ct.name && ct.name.toLowerCase() !== 'unknown' && ct.name.split(' ').length >= 2
+      );
+      if (needsEnrichment) {
+        log(`📧 ${inst.name} — enriching missing emails via Prospeo…`, 'info');
+        merged.contacts = await enrichContactsWithProspeo(inst.name, merged.contacts || []);
+      }
+    }
+
+    // Replace the pass1 entry in results with the merged final result
+    const idx = results.findIndex(r => r.name === inst.name && r.status === 'pass1');
+    if (idx !== -1) {
+      results[idx] = { ...inst, ...merged, status: 'done' };
+    } else {
+      results.push({ ...inst, ...merged, status: 'done' });
+    }
+
+    log(`✓ ${inst.name} — complete (both passes)`, 'ok');
+    renderResults();
+    updateProgress(i + 1, institutions.length);
+
+    // Pause between institutions
+    if (i < institutions.length - 1 && !stopRequested) {
+      await interruptibleSleep(15000);
+    }
+  }
+
+  if (stopRequested) {
+    log(`⏹ Stopped. ${results.length} institution(s) processed so far.`, 'warn');
+  } else {
+    log(`Analysis complete. ${results.length} institutions processed.`, 'ok');
+  }
+  runBtn.disabled = false;
+  stopBtn.classList.remove('visible');
+  stopBtn.disabled = false;
+  stopBtn.innerHTML = '<span>■ Stop</span>';
+  if (results.length > 0) renderResults();
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function interruptibleSleep(ms) {
+  // Resolves early if stop is requested, checking every 500ms
+  return new Promise(resolve => {
+    const end = Date.now() + ms;
+    const tick = () => {
+      if (stopRequested || Date.now() >= end) return resolve();
+      setTimeout(tick, Math.min(500, end - Date.now()));
+    };
+    tick();
+  });
+}
+
+function stopAnalysis() {
+  stopRequested = true;
+  log('⏹ Stop requested — finishing current request then halting…', 'warn');
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('stopBtn').textContent = '■ Stopping…';
+}
+
+function updateProgress(done, total) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('progressCount').textContent = `${done} / ${total}`;
+}
+
+// ---- API KEY HELPER ----
+function getProspeoKey() {
+  return document.getElementById('prospeoKeyInput')?.value?.trim() || null;
+}
+
+async function enrichContactsWithProspeo(institutionName, contacts) {
+  const key = getProspeoKey();
+  if (!key) return contacts;
+
+  let domain = null;
+  for (const ct of contacts) {
+    if (ct.email && ct.email !== 'N/A' && ct.email.includes('@')) {
+      const d = ct.email.split('@')[1].toLowerCase();
+      if (!['gmail.com','yahoo.com','hotmail.com','outlook.com'].includes(d)) {
+        domain = d; break;
+      }
+    }
+  }
+  if (!domain) {
+    const cleaned = institutionName.toLowerCase()
+      .replace(/(the|of|for|and|at|inc|llc|ltd|corp|laboratory|laboratories|lab|labs|medical|center|health|system|university|college|hospital|institute|research)/g, '')
+      .replace(/[^a-z0-9]/g, '').trim();
+    if (cleaned) domain = cleaned + '.com';
+  }
+  if (!domain) return contacts;
+
+  const enriched = [...contacts];
+  let found = 0;
+
+  for (let i = 0; i < enriched.length; i++) {
+    if (stopRequested) break;
+    const ct = enriched[i];
+    if (ct.email && ct.email !== 'N/A') continue;
+    const name = (ct.name || '').trim();
+    if (!name || name.toLowerCase() === 'unknown' || name.split(' ').length < 2) continue;
+
+    const parts = name.split(' ');
+    const firstName = parts[0];
+    const lastName = parts[parts.length - 1];
+
+    try {
+      log('  🔍 Prospeo: looking up ' + name + ' @ ' + domain, 'info');
+      const resp = await fetch('https://api.prospeo.io/email-finder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-KEY': key },
+        body: JSON.stringify({ first_name: firstName, last_name: lastName, company: domain })
+      });
+      if (!resp.ok) { log('  ⚠ Prospeo HTTP ' + resp.status + ' for ' + name, 'warn'); continue; }
+      const data = await resp.json();
+      if (!data.error && data.response && data.response.email) {
+        const status = (data.response.verification_status || '').toUpperCase();
+        if (['VALID', 'ACCEPT_ALL', 'UNKNOWN'].includes(status)) {
+          enriched[i] = { ...ct, email: data.response.email, email_source: 'Prospeo' };
+          found++;
+          log('  ✓ Prospeo: ' + data.response.email + ' (' + status + ')', 'ok');
+          const newDomain = data.response.email.split('@')[1];
+          if (newDomain && !['gmail.com','yahoo.com','hotmail.com'].includes(newDomain)) domain = newDomain;
+        } else {
+          log('  ~ Prospeo: low confidence for ' + name + ' (' + status + ')', 'info');
+        }
+      } else {
+        log('  ~ Prospeo: no result for ' + name, 'info');
+      }
+    } catch(e) {
+      log('  ⚠ Prospeo error for ' + name + ': ' + e.message, 'warn');
+    }
+    await sleep(400);
+  }
+
+  if (found > 0) log('📧 Prospeo filled ' + found + ' email(s) for ' + institutionName, 'ok');
+  return enriched;
+}
+
+function getApiKey() {
+  const manual = document.getElementById('apiKeyInput')?.value?.trim();
+  return manual || null; // when running in claude.ai, no key needed (injected by platform)
+}
+
+// ---- CLAUDE API CALL ----
+async function analyzeInstitution(name, location) {
+  const locationStr = location ? ` located in ${location}` : '';
+  const prompt = `You are a scientific research tool. Analyze the institution "${name}"${locationStr}.
+
+Use web search to research this institution. Limit yourself to a maximum of 6 targeted searches total — prioritise the institution's own website, then LinkedIn/directory pages for contacts, then PubMed for NGS platform. Do not search broadly; each search should have a clear specific goal.
+
+Determine:
+
+1. TESTING CAPABILITIES (answer true/false for each):
+   - solid_tumor_general: Does this lab/institution perform solid tumor testing (general oncology/pathology/molecular testing for tumors)?
+   - breast_gi_lung: Does this lab specifically perform testing for breast cancer, GI (gastrointestinal) cancer, or lung cancer?
+   - hematology: Does this lab perform hematology testing (blood cancers, leukemia, lymphoma, CBC, hematopathology)?
+   - infectious_16s: Does this lab perform ANY of the following: 16S rRNA sequencing, infectious disease testing, infectious disease molecular diagnostics, microbiology, virology, PCR-based pathogen detection, respiratory panels, STI testing, sepsis panels, or any other testing that identifies or characterizes infectious agents? Set to true if the lab performs ANY form of infectious disease diagnostics — the scope is intentionally broad.
+
+IMPORTANT — CONSISTENCY CHECK: Before finalising your JSON, re-read your testing_notes summary. If your summary mentions anything related to a category above, the corresponding boolean MUST be true. For example: if testing_notes mentions "infectious disease", "microbiology", "molecular diagnostics for pathogens", or similar — infectious must be true. If it mentions "oncology", "tumor", or "cancer testing" — solid_tumor must be true. Never leave a flag as false if your own summary contradicts it.
+
+2. NGS (Next Generation Sequencing):
+   - does_ngs: Does this lab perform next generation sequencing?
+   - ngs_platform: If yes, identify the specific instrument model(s) — not just the brand. Use ALL of the following search strategies:
+       a) Institution website: search "[institution name] sequencing platform", "[institution name] NGS", "[institution name] genomics core"
+       b) Published papers on PubMed: search "pubmed [institution name] next generation sequencing" or "pubmed [institution name] sequencing methods" — papers routinely name the exact instrument in their Methods section (e.g. "sequenced on an Illumina NovaSeq 6000", "using a PacBio Sequel IIe"). Check at least 2-3 recent papers.
+       c) Google Scholar or preprints: search "[institution name] sequencing site:biorxiv.org" or "[institution name] whole genome sequencing"
+     Specific models to look for: Illumina NovaSeq 6000/X, NextSeq 550/2000, MiSeq, HiSeq; PacBio Sequel II/IIe/Revio; Oxford Nanopore PromethION/MinION/GridION; Ion Torrent Genexus/S5; 10x Genomics Chromium; Element Biosciences AVITI; MGI DNBSEQ.
+     If multiple platforms are found, list all of them. If only the brand is found (e.g. "Illumina" without a model), state the brand. Say "Unknown" only after exhausting all search strategies above.
+
+3. CONTACTS: Search aggressively across multiple sources to find the most relevant contacts at this institution.
+
+   PRIORITY TITLES TO FIND (in order):
+   - "Lab Director" or "Laboratory Director" (always search for this first)
+   - "NGS Lead", "NGS Director", "Genomics Lead", or "Team Lead"
+   - If the lab performs infectious disease testing: "Infectious Disease Director" or "Director of Infectious Disease"
+   - If the lab performs pathology: "Chief of Pathology", "Chair of Pathology", or "Medical Director of Pathology"
+   - Then: other relevant roles such as Lab Manager, Research Director, Senior Scientist, Department Head
+
+   SEARCH STRATEGY — use ALL of the following sources:
+   a) Institution website: check "About", "Team", "Leadership", "Staff Directory", or "Contact" pages
+   b) LinkedIn: search "[institution name] Laboratory Director", "[institution name] NGS Lead", etc.
+   c) ZoomInfo: search "[institution name]" on zoominfo.com — it lists verified business contacts with emails and direct dials
+   d) Contact databases: also try rocketreach.co, apollo.io, and hunter.io for "[name] [institution]" to find verified email addresses
+   e) Published papers: authors from recent papers often list their institutional email in the correspondence section
+   f) Press releases and news articles mentioning staff names
+
+   EMAIL SOURCING: For each contact found, try to find their email via:
+   - ZoomInfo profile (most reliable for business emails)
+   - RocketReach or Apollo.io profile
+   - The institution's own published staff directory
+   - Pattern-matching from known institutional email formats (e.g. if one contact is john.doe@lab.com, try firstname.lastname@lab.com for others)
+   - Only mark email as "N/A" after trying all of the above
+
+   Also find the general laboratory phone number (main switchboard or lab line). Search "[institution name] phone", "[institution name] contact us", or check their website directly.
+
+Respond ONLY with valid JSON (no markdown, no backticks) in exactly this format:
+{
+  "solid_tumor": true or false,
+  "breast_gi_lung": true or false,
+  "hematology": true or false,
+  "infectious": true or false,
+  "does_ngs": true or false,
+  "ngs_platform": "string or empty string",
+  "ngs_source": "where NGS platform info was found, e.g. \'PubMed: Smith et al. 2023\' or \'institution website\' or \'N/A\'",
+  "testing_notes": "1-2 sentence summary of what this lab does",
+  "lab_phone": "general lab phone number or N/A",
+  "contacts": [
+    {
+      "name": "Full Name",
+      "title": "Job Title",
+      "email": "email@domain.com or N/A",
+      "phone": "phone number or N/A"
+    }
+  ],
+  "sources": ["url1", "url2"]
+}`;
+
+  // Auto-detect environment:
+  // - localhost → route through local proxy server at /api (avoids CORS, key held server-side)
+  // - elsewhere (claude.ai, hosted) → call Anthropic directly (key injected by platform or entered manually)
+  const manualKey = getApiKey();
+  // Routing logic:
+  // - If a manual API key is entered: call Anthropic directly (standalone use)
+  // - If served from our own server (localhost or Railway): use the /api proxy
+  // - Otherwise (e.g. inside claude.ai iframe): call Anthropic directly, key injected by platform
+  const isOwnServer = window.location.hostname === 'localhost'
+    || window.location.hostname === '127.0.0.1'
+    || window.location.hostname.endsWith('.railway.app')
+    || window.location.hostname.endsWith('.up.railway.app');
+  const apiUrl = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
+  const extraHeaders = manualKey ? { "x-api-key": manualKey } : {};
+
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...extraHeaders },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const errPayload = err.error || err;
+    // Include HTTP status in the thrown error so it's visible in the log
+    throw new Error(JSON.stringify({ http_status: response.status, ...errPayload }));
+  }
+
+  const data = await response.json();
+
+  const fullText = data.content
+    .map(item => item.type === 'text' ? item.text : '')
+    .filter(Boolean)
+    .join('\n');
+
+  return await parseOrRetry(fullText, apiUrl, extraHeaders);
+}
+
+// ---- JSON PARSE WITH RETRY ----
+async function parseOrRetry(fullText, apiUrl, extraHeaders) {
+  // Attempt 1: strip markdown fences and extract first JSON object
+  const tryParse = text => {
+    const clean = text.replace(/```json|```/g, '').trim();
+    // Try the largest JSON object in the text (greedy match)
+    const match = clean.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try { return JSON.parse(match[0]); } catch(_) { return null; }
+  };
+
+  const parsed = tryParse(fullText);
+  if (parsed) return parsed;
+
+  // Attempt 2: ask the model to re-emit just the JSON
+  console.warn('JSON not found in response, requesting clean re-emit. Raw text:', fullText.substring(0, 200));
+  try {
+    const retryResponse = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        messages: [
+          { role: 'user', content: `You previously produced this output but it could not be parsed as JSON:\n\n${fullText}\n\nPlease re-emit ONLY the JSON object from your response — no explanation, no markdown, no backticks. Start your reply with { and end with }.` }
+        ]
+      })
+    });
+    if (retryResponse.ok) {
+      const retryData = await retryResponse.json();
+      const retryText = retryData.content.map(i => i.type === 'text' ? i.text : '').filter(Boolean).join('\n');
+      const retryParsed = tryParse(retryText);
+      if (retryParsed) return retryParsed;
+    }
+  } catch(e) {
+    console.warn('Re-emit attempt also failed:', e);
+  }
+
+  // Attempt 3: return a safe empty skeleton so the institution still appears in results
+  return {
+    solid_tumor: false, breast_gi_lung: false, hematology: false,
+    infectious: false, does_ngs: false, ngs_platform: '',
+    ngs_source: '', testing_notes: 'Could not parse response — try re-running this institution.',
+    lab_phone: 'N/A', contacts: [], sources: []
+  };
+}
+
+// ---- PASS 2: GAP-FILL SEARCH ----
+async function refineInstitution(name, location, prior) {
+  const locationStr = location ? ` located in ${location}` : '';
+
+  // Build a precise list of what's still missing from pass 1
+  const gaps = [];
+  if (!prior.ngs_platform || prior.ngs_platform === 'Unknown' || prior.ngs_platform === '') {
+    gaps.push('- NGS platform: not found yet. Search PubMed ("[institution] sequencing"), the institution website, and Google Scholar specifically for instrument model names (e.g. "Illumina NovaSeq", "PacBio", "Oxford Nanopore").');
+  }
+  const missingContactInfo = (prior.contacts || []).filter(c => c.email === 'N/A' || c.phone === 'N/A');
+  if (missingContactInfo.length > 0) {
+    const names = missingContactInfo.map(c => c.name).join(', ');
+    gaps.push(`- Missing emails/phones for: ${names}. Search ZoomInfo (zoominfo.com), RocketReach (rocketreach.co), Apollo.io, and hunter.io for each person. Also try LinkedIn and any published papers where they may have listed their institutional email.`);
+  }
+  if (!prior.lab_phone || prior.lab_phone === 'N/A') {
+    gaps.push('- General lab phone number: not found yet. Search "[institution name] phone", "[institution name] contact us", and check their website directly.');
+  }
+  const priorityTitles = ['laboratory director', 'lab director', 'ngs lead', 'ngs director', 'genomics lead', 'team lead', 'infectious disease director', 'chief of pathology', 'chair of pathology'];
+  const foundTitles = (prior.contacts || []).map(c => (c.title||'').toLowerCase());
+  const missingPriority = priorityTitles.filter(t => !foundTitles.some(f => f.includes(t.split(' ')[0]) && f.includes(t.split(' ').pop())));
+  if (missingPriority.length > 0) {
+    gaps.push(`- Priority contacts not yet found: ${missingPriority.join(', ')}. Search LinkedIn, ZoomInfo, and the institution website specifically for these roles.`);
+  }
+  if ((prior.contacts || []).length < 3) {
+    gaps.push('- Need more contacts: only ' + (prior.contacts||[]).length + ' found so far. Search ZoomInfo and LinkedIn for "[institution name] director" or "[institution name] lab manager".');
+  }
+
+  const gapText = gaps.length > 0
+    ? 'Focus especially on filling these specific gaps from the first search:\n' + gaps.join('\n')
+    : 'All fields were found in the first pass. Verify the information is accurate and look for any additional contacts or NGS platform details that may have been missed.';
+
+  const prompt = `You are a scientific research tool doing a SECOND, deeper search pass on the institution "${name}"${locationStr}.
+
+A first search already found this information:
+${JSON.stringify(prior, null, 2)}
+
+${gapText}
+
+Do additional targeted web searches to find anything missing or improvable above. For contacts specifically, focus on ZoomInfo, RocketReach, Apollo.io, LinkedIn, and the institution's own staff directory to find verified email addresses and direct phone numbers. Then return a COMPLETE updated record — include everything from the first pass plus any new findings.
+
+IMPORTANT — CONSISTENCY CHECK: Re-read your testing_notes. If it mentions infectious disease, microbiology, molecular diagnostics, oncology, tumor, cancer, hematology, or NGS — the corresponding boolean must be true.
+
+Respond ONLY with valid JSON (no markdown, no backticks) in exactly this format:
+{
+  "solid_tumor": true or false,
+  "breast_gi_lung": true or false,
+  "hematology": true or false,
+  "infectious": true or false,
+  "does_ngs": true or false,
+  "ngs_platform": "string or empty string",
+  "ngs_source": "where NGS platform info was found",
+  "testing_notes": "1-2 sentence summary",
+  "lab_phone": "general lab phone number or N/A",
+  "contacts": [
+    {
+      "name": "Full Name",
+      "title": "Job Title",
+      "email": "email@domain.com or N/A",
+      "phone": "phone number or N/A"
+    }
+  ],
+  "sources": ["url1", "url2"]
+}`;
+
+  const manualKey = getApiKey();
+  // Routing logic:
+  // - If a manual API key is entered: call Anthropic directly (standalone use)
+  // - If served from our own server (localhost or Railway): use the /api proxy
+  // - Otherwise (e.g. inside claude.ai iframe): call Anthropic directly, key injected by platform
+  const isOwnServer = window.location.hostname === 'localhost'
+    || window.location.hostname === '127.0.0.1'
+    || window.location.hostname.endsWith('.railway.app')
+    || window.location.hostname.endsWith('.up.railway.app');
+  const apiUrl = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
+  const extraHeaders = manualKey ? { "x-api-key": manualKey } : {};
+
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...extraHeaders },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(JSON.stringify(err.error || err));
+  }
+
+  const data = await response.json();
+  const fullText = data.content.map(item => item.type === 'text' ? item.text : '').filter(Boolean).join('\n');
+
+  return await parseOrRetry(fullText, apiUrl, extraHeaders);
+}
+
+// ---- MERGE PASS 1 + PASS 2 ----
+function mergeResults(pass1, pass2) {
+  if (!pass2) return pass1;
+
+  // For booleans: true wins (if either pass found it, it's true)
+  const merged = {
+    solid_tumor:   pass1.solid_tumor   || pass2.solid_tumor,
+    breast_gi_lung: pass1.breast_gi_lung || pass2.breast_gi_lung,
+    hematology:    pass1.hematology    || pass2.hematology,
+    infectious:    pass1.infectious    || pass2.infectious,
+    does_ngs:      pass1.does_ngs      || pass2.does_ngs,
+    // For strings: prefer pass2 if it's more informative than pass1
+    ngs_platform:  betterString(pass1.ngs_platform, pass2.ngs_platform),
+    ngs_source:    betterString(pass1.ngs_source,   pass2.ngs_source),
+    testing_notes: betterString(pass1.testing_notes, pass2.testing_notes),
+    lab_phone:     betterString(pass1.lab_phone,     pass2.lab_phone),
+    sources:       mergeArrayUnique(pass1.sources || [], pass2.sources || []),
+    // For contacts: merge by name, filling in missing fields from each pass
+    contacts:      mergeContacts(pass1.contacts || [], pass2.contacts || []),
+  };
+  return merged;
+}
+
+function betterString(a, b) {
+  const isBlank = s => !s || s === 'N/A' || s === 'Unknown' || s.trim() === '';
+  if (isBlank(a) && !isBlank(b)) return b;
+  if (!isBlank(a) && isBlank(b)) return a;
+  // Both have values — prefer the longer/more detailed one
+  if (!isBlank(a) && !isBlank(b)) return b.length >= a.length ? b : a;
+  return a || b || '';
+}
+
+function mergeArrayUnique(a, b) {
+  return [...new Set([...a, ...b])];
+}
+
+function mergeContacts(contacts1, contacts2) {
+  const merged = [...contacts1];
+  for (const c2 of contacts2) {
+    const existing = merged.find(c1 =>
+      c1.name && c2.name && c1.name.toLowerCase() === c2.name.toLowerCase()
+    );
+    if (existing) {
+      // Fill in missing fields from pass 2
+      if (!existing.email || existing.email === 'N/A') existing.email = c2.email;
+      if (!existing.phone || existing.phone === 'N/A') existing.phone = c2.phone;
+      if (!existing.title || existing.title === 'N/A') existing.title = c2.title;
+    } else {
+      merged.push(c2); // new contact found in pass 2
+    }
+  }
+  return merged;
+}
+
+// ---- RENDER RESULTS ----
+function renderResults() {
+  document.getElementById('resultsSection').classList.add('visible');
+  renderStats();
+  renderCards();
+}
+
+function renderStats() {
+  const total = results.length;
+  const st = results.filter(r => r.solid_tumor).length;
+  const bgl = results.filter(r => r.breast_gi_lung).length;
+  const hem = results.filter(r => r.hematology).length;
+  const inf = results.filter(r => r.infectious).length;
+  const ngs = results.filter(r => r.does_ngs).length;
+
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat-cell"><div class="stat-num" style="color:var(--text)">${total}</div><div class="stat-label">Total<br>Institutions</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:var(--solid-tumor)">${st}</div><div class="stat-label">Solid Tumor<br>General</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:var(--breast-gi-lung)">${bgl}</div><div class="stat-label">Breast / GI<br>/ Lung</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:var(--hematology)">${hem}</div><div class="stat-label">Hematology</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:var(--infectious)">${inf}</div><div class="stat-label">16S rRNA /<br>Infectious</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:var(--ngs)">${ngs}</div><div class="stat-label">NGS<br>Confirmed</div></div>
+  `;
+
+  document.getElementById('resultsCountLabel').innerHTML = `<span>(${total})</span>`;
+}
+
+function renderCards() {
+  const grid = document.getElementById('cardsGrid');
+  let filtered = results;
+
+  if (currentFilter === 'solid_tumor') filtered = results.filter(r => r.solid_tumor);
+  else if (currentFilter === 'breast_gi_lung') filtered = results.filter(r => r.breast_gi_lung);
+  else if (currentFilter === 'hematology') filtered = results.filter(r => r.hematology);
+  else if (currentFilter === 'infectious') filtered = results.filter(r => r.infectious);
+  else if (currentFilter === 'ngs') filtered = results.filter(r => r.does_ngs);
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔬</div>No institutions match this filter.</div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map((r, idx) => buildCard(r, idx)).join('');
+}
+
+function buildCard(r, idx) {
+  const hasResults = r.solid_tumor || r.breast_gi_lung || r.hematology || r.infectious || r.does_ngs;
+
+  const tags = [];
+  if (r.solid_tumor) tags.push(`<span class="tag tag-solid-tumor"><span class="tag-dot"></span>Solid Tumor (General)</span>`);
+  if (r.breast_gi_lung) tags.push(`<span class="tag tag-breast-gi-lung"><span class="tag-dot"></span>Breast / GI / Lung</span>`);
+  if (r.hematology) tags.push(`<span class="tag tag-hematology"><span class="tag-dot"></span>Hematology</span>`);
+  if (r.infectious) tags.push(`<span class="tag tag-infectious"><span class="tag-dot"></span>16S rRNA / Infectious Disease</span>`);
+
+  const contacts = (r.contacts || []).slice(0, 5);
+
+  const sourcesHtml = (r.sources || []).length > 0 ? `
+    <div class="sources-row">
+      <div class="sources-label">Sources</div>
+      ${(r.sources || []).slice(0,3).map(s => `<a class="source-link" href="${s}" target="_blank" rel="noopener">${s.replace(/^https?:\/\//,'').substring(0,60)}</a>`).join('')}
+    </div>` : '';
+
+  const ngsPlatformHtml = r.does_ngs ? `
+    <div class="ngs-platform">
+      <div class="ngs-platform-label">NGS Platform</div>
+      <div class="ngs-platform-value">${r.ngs_platform || 'Platform not identified'}</div>
+      ${r.ngs_source && r.ngs_source !== 'N/A' ? `<div style="font-size:10px;color:var(--text-dim);margin-top:4px;">Source: ${escapeHtml(r.ngs_source)}</div>` : ''}
+    </div>` : '';
+
+  const labPhoneHtml = (r.lab_phone && r.lab_phone !== 'N/A') ? `
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+      <span style="color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;font-size:10px;">Lab Phone</span><br>
+      <a href="tel:${r.lab_phone}" style="color:var(--accent2);text-decoration:none;">${escapeHtml(r.lab_phone)}</a>
+    </div>` : '';
+
+  const notesHtml = r.testing_notes ? `
+    <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      ${r.testing_notes}
+    </div>` : '';
+
+  return `
+  <div class="lab-card ${hasResults ? 'has-results' : ''}" data-id="${idx}">
+    <div class="lab-card-accent"></div>
+    <div class="lab-card-head">
+      <div>
+        <div class="lab-name">${escapeHtml(r.name)}</div>
+        ${r.location ? `<div class="lab-location">📍 ${escapeHtml(r.location)}</div>` : ''}
+      </div>
+      <span class="lab-status-badge ${r.status === 'done' ? 'badge-done' : r.status === 'error' ? 'badge-error' : r.status === 'pass1' ? 'badge-pass1' : 'badge-pending'}">
+        ${r.status === 'done' ? '✓ Complete' : r.status === 'error' ? '✗ Error' : r.status === 'pass1' ? '⟳ Pass 2…' : 'Pending'}
+      </span>
+    </div>
+    <div class="lab-card-body">
+      ${notesHtml}
+      <div class="testing-row">
+        <div class="testing-row-label">Testing Capabilities</div>
+        <div class="tags-row">
+          ${tags.length > 0 ? tags.join('') : '<span class="tag tag-none">None identified</span>'}
+        </div>
+      </div>
+      ${ngsPlatformHtml}
+      ${labPhoneHtml}
+      ${contacts.length > 0 ? `
+      <div class="contacts-section">
+        <div class="contacts-label">Key Contacts (${contacts.length})</div>
+        ${contacts.map(c => `
+          <div class="contact-item">
+            <div>
+              <div class="contact-name">${escapeHtml(c.name || 'Unknown')}</div>
+              <div class="contact-title">${escapeHtml(c.title || '')}</div>
+              <div class="contact-info">
+                ${c.email && c.email !== 'N/A' ? `<a class="contact-detail" href="mailto:${c.email}">${escapeHtml(c.email)}</a>` : '<span class="contact-detail na">Email N/A</span>'}
+                ${c.phone && c.phone !== 'N/A' ? `<a class="contact-detail phone" href="tel:${c.phone}">${escapeHtml(c.phone)}</a>` : '<span class="contact-detail na">Phone N/A</span>'}
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>` : '<div style="font-size:11px;color:var(--text-dim);font-style:italic">No contacts identified</div>'}
+      ${sourcesHtml}
+    </div>
+  </div>`;
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function applyFilter(filter, btn) {
+  currentFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderCards();
+}
+
+function exportResults() {
+  if (!results.length) return;
+
+  const rows = [['Institution', 'Location', 'Solid Tumor (General)', 'Breast/GI/Lung', 'Hematology', '16S/Infectious', 'NGS', 'NGS Platform', 'NGS Platform Source', 'Testing Notes', 'Lab Phone', 'Contact 1 Name', 'Contact 1 Title', 'Contact 1 Email', 'Contact 1 Phone', 'Contact 2 Name', 'Contact 2 Title', 'Contact 2 Email', 'Contact 2 Phone', 'Contact 3 Name', 'Contact 3 Title', 'Contact 3 Email', 'Contact 3 Phone']];
+  results.forEach(r => {
+    const ct = r.contacts || [];
+    rows.push([
+      r.name, r.location || '',
+      r.solid_tumor ? 'Yes' : 'No',
+      r.breast_gi_lung ? 'Yes' : 'No',
+      r.hematology ? 'Yes' : 'No',
+      r.infectious ? 'Yes' : 'No',
+      r.does_ngs ? 'Yes' : 'No',
+      r.ngs_platform || '',
+      r.ngs_source || '',
+      r.testing_notes || '',
+      r.lab_phone || '',
+      ct[0]?.name||'', ct[0]?.title||'', ct[0]?.email||'', ct[0]?.phone||'',
+      ct[1]?.name||'', ct[1]?.title||'', ct[1]?.email||'', ct[1]?.phone||'',
+      ct[2]?.name||'', ct[2]?.title||'', ct[2]?.email||'', ct[2]?.phone||''
+    ]);
+  });
+
+  // Build XLSX using SheetJS
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  // Style header row bold by setting cell metadata (SheetJS supports this via !cols width hints)
+  const colWidths = rows[0].map((h, i) => ({
+    wch: Math.max(h.length, ...rows.slice(1).map(r => String(r[i]||'').length), 10)
+  }));
+  ws['!cols'] = colWidths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'LabScope Results');
+
+  // Write to base64 and trigger download via data URI (works in sandboxed iframes)
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+  const a = document.createElement('a');
+  a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + wbout;
+  a.download = 'labscope_results.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+</script>
+</body>
+</html>
