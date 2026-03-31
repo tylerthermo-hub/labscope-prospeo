@@ -1218,23 +1218,7 @@ async function runPipeline(institutions, runBtn, stopBtn) {
     renderResults();
     log(`[A] ${inst.name} — complete`, 'ok');
 
-    // ── B: bioRxiv/PMC search (only if NGS found but platform unknown) ────
-    if (!stopRequested && result.does_ngs &&
-        (!result.ngs_platform || result.ngs_platform === 'Unknown' || result.ngs_platform === '')) {
-      log(`[B] ${inst.name} — NGS platform unknown, searching bioRxiv/PMC…`, 'info');
-      await interruptibleSleep(3000);
-      const ngsResult = await runWithRetry(
-        () => searchNgsPlatform(inst.name, inst.location),
-        `${inst.name} NGS`
-      );
-      if (ngsResult && ngsResult.ngs_platform && ngsResult.ngs_platform !== 'Unknown') {
-        result.ngs_platform = ngsResult.ngs_platform;
-        result.ngs_source   = ngsResult.ngs_source || 'bioRxiv/PMC';
-        log(`[B] ${inst.name} — platform found: ${result.ngs_platform}`, 'ok');
-      } else {
-        log(`[B] ${inst.name} — platform not found in papers`, 'info');
-      }
-    }
+
 
     // ── C: Prospeo enrichment (only if key provided) ──────────────────────
     if (!stopRequested && getProspeoKey() && (result.contacts || []).length > 0) {
@@ -1400,28 +1384,44 @@ async function analyzeInstitution(name, location) {
   const apiUrl      = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
   const extraHeaders = manualKey ? { 'x-api-key': manualKey } : {};
 
-  const prompt = `Research "${name}"${locationStr}. Search their website (About, Services, Test Menu, Team, Staff Directory, Contact pages).
+  const prompt = `You are researching the clinical laboratory or institution "${name}"${locationStr}. Perform a thorough multi-source search to answer all questions below as completely as possible.
 
-1. TESTING — answer true/false:
-   - solid_tumor: general solid tumor / oncology / molecular pathology testing
-   - breast_gi_lung: specifically breast, GI (gastrointestinal), or lung cancer testing
-   - hematology: blood cancers, CBC, hematopathology
-   - infectious_16s: specifically 16S rRNA sequencing
-   - infectious_other: other infectious disease / microbiology testing (PCR panels, virology, STI, sepsis, respiratory panels) — NOT including 16S rRNA
+SEARCH STRATEGY — work through these in order, using as many as needed:
+a) Institution website: homepage, About Us, Services/Test Menu, Capabilities, Technology, Team/Leadership/Staff Directory, Contact Us pages
+b) LinkedIn: search "[institution name]" to find the company page and employee profiles
+c) Google: search "[institution name] laboratory testing", "[institution name] NGS platform", "[institution name] infectious disease testing"
+d) Email lookup tools: search RocketReach (rocketreach.co), Mailmeteor (findymail.com), Hunter.io, or Clearbit for contact emails at this institution
+e) Published press releases, news articles, or accreditation listings mentioning this institution
 
-   CONSISTENCY: re-read testing_notes before finalising. If it mentions any category above, that boolean must be true.
+━━━ SECTION 1: TESTING CAPABILITIES ━━━
+Answer true/false for EACH. Be inclusive — if there is ANY mention of the capability, set to true.
 
-2. NGS:
-   - does_ngs: true/false
-   - ngs_platform: search the institution website genomics/sequencing core page for the specific instrument model (e.g. Illumina NovaSeq 6000, PacBio Revio, Oxford Nanopore PromethION). Leave empty string if not found on website — a follow-up search will check bioRxiv/PMC.
+- solid_tumor: Does this lab perform solid tumor testing, oncology testing, molecular pathology, cancer diagnostics, tumor profiling, or any cancer-related molecular testing?
+- breast_gi_lung: Does this lab SPECIFICALLY mention breast cancer, GI (gastrointestinal / colorectal) cancer, or lung cancer testing?
+- hematology: Does this lab perform hematology, blood cancer testing, CBC, leukemia/lymphoma testing, or hematopathology?
+- infectious_16s: Does this lab specifically perform 16S rRNA sequencing or 16S-based microbiome testing?
+- infectious_other: Does this lab perform ANY OTHER infectious disease or microbiology testing NOT captured by 16S? This includes: molecular diagnostics for infectious agents, PCR-based pathogen detection, respiratory panels, STI/sexual health testing, sepsis panels, virology, bacteriology, fungal testing, antimicrobial susceptibility, infectious disease molecular diagnostics, pharmacogenomics related to antibiotic dosing, or any mention of detecting/identifying pathogens or infectious agents. Set to TRUE if there is ANY indication of infectious disease or microbiology work.
 
-3. CONTACTS — search website for up to 3 contacts in this priority order:
-   1. Director or VP of Laboratory / Laboratory Services / Laboratory Operations
-   2. NGS Team Lead, Head of NGS, or NGS Technician
-   3. Chair or Chief of Pathology or Infectious Disease
-   Record name, title, and any phone/email listed directly on the site.
-   Also find the general lab phone number from their Contact page.
-   Only include contacts with real identified names — no Unknown or placeholder entries.
+CRITICAL CONSISTENCY CHECK: After writing testing_notes, verify every boolean. If testing_notes mentions "infectious disease", "microbiology", "molecular diagnostics", "pathogen", "pharmacogenomics", "virology", "STI", "sepsis", "respiratory" — infectious_other must be true. If it mentions "oncology", "cancer", "tumor", "pathology" — solid_tumor must be true.
+
+━━━ SECTION 2: NGS PLATFORM ━━━
+- does_ngs: Does this lab perform Next Generation Sequencing (NGS), whole genome sequencing, whole exome sequencing, targeted panel sequencing, RNA-seq, or any high-throughput sequencing?
+- ngs_platform: Search the institution website genomics/sequencing core page AND any press releases or technology pages for the SPECIFIC instrument model. Examples: Illumina NovaSeq 6000, Illumina NextSeq 550, PacBio Revio, Oxford Nanopore PromethION, Ion Torrent Genexus. List ALL platforms found. Leave empty only if not found anywhere.
+
+━━━ SECTION 3: CONTACTS ━━━
+Find up to 3 contacts. Search the institution website AND LinkedIn company page AND Google for people at this institution with these titles (in priority order):
+  1. Director, VP, or Head of Laboratory / Laboratory Services / Laboratory Operations / Clinical Laboratory
+  2. NGS Lead, NGS Director, Head of NGS, NGS Technician, Genomics Lead
+  3. Chair, Chief, or Director of Pathology or Infectious Disease
+
+For each contact found:
+- Record their full name and exact title
+- Search RocketReach (rocketreach.co), Hunter.io (hunter.io/email-finder), Mailmeteor/Findymail (findymail.com), and Clearbit for their work email
+- Search the institution website Contact page and their LinkedIn profile for a direct phone number
+- If no email or phone is found, provide their LinkedIn profile URL
+- Only include contacts with real identified names — no Unknown or placeholder entries
+
+Also search the institution website Contact page for the general lab phone number.
 
 Respond ONLY with valid JSON, no markdown, no backticks:
 {
@@ -1433,12 +1433,18 @@ Respond ONLY with valid JSON, no markdown, no backticks:
   "does_ngs": false,
   "ngs_platform": "",
   "ngs_source": "",
-  "testing_notes": "1-2 sentence summary",
+  "testing_notes": "2-3 sentence summary of what this lab does",
   "lab_phone": "N/A",
   "contacts": [
-    {"name": "Full Name", "title": "Job Title", "email": "N/A", "phone": "N/A"}
+    {
+      "name": "Full Name",
+      "title": "Job Title",
+      "email": "email or N/A",
+      "phone": "phone or N/A",
+      "linkedin": "https://linkedin.com/in/... or N/A"
+    }
   ],
-  "sources": ["url1"]
+  "sources": ["url1", "url2"]
 }`;
 
   const response = await fetch(apiUrl, {
@@ -1446,7 +1452,7 @@ Respond ONLY with valid JSON, no markdown, no backticks:
     headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 3000,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages: [{ role: 'user', content: prompt }]
     })
@@ -1466,38 +1472,6 @@ Respond ONLY with valid JSON, no markdown, no backticks:
   return JSON.parse(match[0]);
 }
 
-// ---- STEP B: BIORXIV/PMC NGS PLATFORM SEARCH ----
-async function searchNgsPlatform(name, location) {
-  const locationStr  = location ? ` located in ${location}` : '';
-  const manualKey    = getApiKey();
-  const isOwnServer  = window.location.hostname === 'localhost'
-    || window.location.hostname === '127.0.0.1'
-    || window.location.hostname.endsWith('.railway.app')
-    || window.location.hostname.endsWith('.up.railway.app');
-  const apiUrl       = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
-  const extraHeaders = manualKey ? { 'x-api-key': manualKey } : {};
-
-  const prompt = `Search site:biorxiv.org and site:pmc.ncbi.nlm.nih.gov for papers from "${name}"${locationStr} that mention next generation sequencing. Find the exact instrument model in the Methods section (e.g. Illumina NovaSeq 6000, PacBio Revio, Oxford Nanopore PromethION). Respond ONLY with JSON: {"ngs_platform": "exact model or Unknown", "ngs_source": "paper title or URL where found"}`;
-
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 500,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
-
-  if (!response.ok) return null;
-  const rawText2 = await response.text();
-  const data2 = JSON.parse(rawText2.trim());
-  const text  = (data2.content || []).map(i => i.type === 'text' ? i.text : '').filter(Boolean).join('\n');
-  const match = text.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  try { return JSON.parse(match[0]); } catch(_) { return null; }
-}
 
 // ---- STEP C: FIND ADDITIONAL CONTACTABLE PERSON (via web search) ----
 async function findContactableContact(name, location) {
@@ -1701,6 +1675,7 @@ function buildCard(r, idx) {
               <div class="contact-info">
                 ${c.email && c.email !== 'N/A' ? `<a class="contact-detail" href="mailto:${c.email}">${escapeHtml(c.email)}</a>` : '<span class="contact-detail na">Email N/A</span>'}
                 ${c.phone && c.phone !== 'N/A' ? `<a class="contact-detail phone" href="tel:${c.phone}">${escapeHtml(c.phone)}</a>` : '<span class="contact-detail na">Phone N/A</span>'}
+              ${c.linkedin && c.linkedin !== 'N/A' ? `<a class="contact-detail" href="${c.linkedin}" target="_blank" rel="noopener" style="color:var(--accent2);">LinkedIn ↗</a>` : ''}
               </div>
             </div>
           </div>
@@ -1726,7 +1701,7 @@ function applyFilter(filter, btn) {
 function exportResults() {
   if (!results.length) return;
 
-  const rows = [['Institution', 'Location', 'Solid Tumor (General)', 'Breast/GI/Lung', 'Hematology', '16S rRNA', 'Other Infectious Disease', 'NGS', 'NGS Platform', 'NGS Platform Source', 'Testing Notes', 'Lab Phone', 'Contact 1 Name', 'Contact 1 Title', 'Contact 1 Email', 'Contact 1 Phone', 'Contact 2 Name', 'Contact 2 Title', 'Contact 2 Email', 'Contact 2 Phone', 'Contact 3 Name', 'Contact 3 Title', 'Contact 3 Email', 'Contact 3 Phone']];
+  const rows = [['Institution', 'Location', 'Solid Tumor (General)', 'Breast/GI/Lung', 'Hematology', '16S rRNA', 'Other Infectious Disease', 'NGS', 'NGS Platform', 'NGS Platform Source', 'Testing Notes', 'Lab Phone', 'Contact 1 Name', 'Contact 1 Title', 'Contact 1 Email', 'Contact 1 Phone', 'Contact 1 LinkedIn', 'Contact 2 Name', 'Contact 2 Title', 'Contact 2 Email', 'Contact 2 Phone', 'Contact 2 LinkedIn', 'Contact 3 Name', 'Contact 3 Title', 'Contact 3 Email', 'Contact 3 Phone', 'Contact 3 LinkedIn']];
   results.forEach(r => {
     const ct = r.contacts || [];
     rows.push([
