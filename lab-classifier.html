@@ -1486,7 +1486,8 @@ Respond ONLY with valid JSON (no markdown, no backticks) in exactly this format:
     throw new Error(JSON.stringify({ http_status: response.status, ...errPayload }));
   }
 
-  const data = await response.json();
+  const rawText = await response.text();
+  const data = JSON.parse(rawText.trim());
 
   const fullText = data.content
     .map(item => item.type === 'text' ? item.text : '')
@@ -1635,7 +1636,8 @@ Respond ONLY with valid JSON (no markdown, no backticks) in exactly this format:
     throw new Error(JSON.stringify(err.error || err));
   }
 
-  const data = await response.json();
+  const rawText2 = await response.text();
+  const data = JSON.parse(rawText2.trim());
   const fullText = data.content.map(item => item.type === 'text' ? item.text : '').filter(Boolean).join('\n');
 
   return await parseOrRetry(fullText, apiUrl, extraHeaders);

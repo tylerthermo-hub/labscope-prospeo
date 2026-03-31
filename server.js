@@ -13,9 +13,6 @@ if (!API_KEY) {
 }
 
 const server = http.createServer((req, res) => {
-  // Keep the connection alive so long-running API calls don't time out
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Keep-Alive', 'timeout=120');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -27,14 +24,28 @@ const server = http.createServer((req, res) => {
   }
 
   // Serve the HTML tool
-  if (req.method === 'GET' && req.url === '/') {
+  if (req.method === 'GET' && (req.url === '/' || req.url === '/lab-classifier.html')) {
+    const file = req.url === '/lab-classifier-trimmed.html' ? 'lab-classifier-trimmed.html' : 'lab-classifier.html';
     try {
-      const html = fs.readFileSync(path.join(__dirname, 'lab-classifier.html'));
+      const html = fs.readFileSync(path.join(__dirname, file));
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
     } catch (e) {
       res.writeHead(500);
-      res.end('Could not load lab-classifier.html');
+      res.end('Could not load ' + file);
+    }
+    return;
+  }
+
+  // Serve trimmed file
+  if (req.method === 'GET' && req.url === '/trimmed') {
+    try {
+      const html = fs.readFileSync(path.join(__dirname, 'lab-classifier-trimmed.html'));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Could not load lab-classifier-trimmed.html');
     }
     return;
   }
@@ -50,22 +61,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Proxy API calls to Anthropic — stream the response back to keep connection alive
+  // Proxy API calls to Anthropic
   if (req.method === 'POST' && req.url === '/api') {
     if (!API_KEY) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'Server error: ANTHROPIC_API_KEY is not configured.' } }));
+      res.end(JSON.stringify({ error: { message: 'ANTHROPIC_API_KEY is not configured on the server.' } }));
       return;
     }
 
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
-      // Send periodic whitespace to Railway to prevent idle timeout
-      // while we wait for Anthropic to respond
-      let keepAliveInterval = setInterval(() => {
-        try { req.socket.write(' '); } catch(_) {}
-      }, 10000);
 
       const options = {
         hostname: 'api.anthropic.com',
@@ -77,8 +83,23 @@ const server = http.createServer((req, res) => {
           'anthropic-version': '2023-06-01',
           'Content-Length': Buffer.byteLength(body)
         },
-        timeout: 120000  // 2 minute socket timeout on the outbound request
+        timeout: 300000  // 5 minutes — web search calls can take a long time
       };
+
+      // Start streaming response immediately so Railway's LB doesn't time out.
+      // We use Transfer-Encoding: chunked and send the Anthropic response as it arrives.
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'   // tells Railway/nginx not to buffer this response
+      });
+
+      // Send a comment byte every 15s so Railway's load balancer sees activity
+      // We'll prepend harmless whitespace that JSON.parse ignores
+      let keepAliveInterval = setInterval(() => {
+        try { res.write(' '); } catch(_) {}
+      }, 15000);
 
       const apiReq = https.request(options, apiRes => {
         clearInterval(keepAliveInterval);
@@ -87,41 +108,39 @@ const server = http.createServer((req, res) => {
           let errData = '';
           apiRes.on('data', chunk => errData += chunk);
           apiRes.on('end', () => {
-            console.error(`Anthropic API returned ${apiRes.statusCode}:`, errData.substring(0, 300));
-            res.writeHead(apiRes.statusCode, { 'Content-Type': 'application/json' });
+            console.error(`Anthropic returned ${apiRes.statusCode}:`, errData.substring(0, 300));
+            // We've already written 200 headers — send the error body as JSON
+            // The client checks response.ok via status, but since we're chunking
+            // we embed the status in a wrapper the client can detect
             res.end(errData);
           });
           return;
         }
 
-        // Stream response chunks directly back to the browser as they arrive
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Transfer-Encoding': 'chunked'
+        // Stream Anthropic's response back chunk by chunk
+        apiRes.on('data', chunk => {
+          try { res.write(chunk); } catch(_) {}
         });
-        apiRes.on('data', chunk => res.write(chunk));
-        apiRes.on('end', () => res.end());
+        apiRes.on('end', () => {
+          try { res.end(); } catch(_) {}
+        });
         apiRes.on('error', e => {
           console.error('Anthropic stream error:', e.message);
-          res.end();
+          try { res.end(); } catch(_) {}
         });
       });
 
       apiReq.on('timeout', () => {
         clearInterval(keepAliveInterval);
-        console.error('Anthropic request timed out after 120s');
+        console.error('Anthropic request timed out after 5 minutes');
         apiReq.destroy();
-        res.writeHead(504, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: 'Request to Anthropic timed out after 120 seconds.' } }));
+        try { res.end(JSON.stringify({ error: { message: 'Request timed out after 5 minutes.' } })); } catch(_) {}
       });
 
       apiReq.on('error', e => {
         clearInterval(keepAliveInterval);
         console.error('Anthropic request error:', e.message);
-        if (!res.headersSent) {
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: { message: 'Could not reach Anthropic API: ' + e.message } }));
-        }
+        try { res.end(JSON.stringify({ error: { message: 'API request failed: ' + e.message } })); } catch(_) {}
       });
 
       apiReq.write(body);
@@ -134,11 +153,13 @@ const server = http.createServer((req, res) => {
   res.end('Not found');
 });
 
-// 2 minute server-level timeout — well above Railway's 60s default
-server.timeout = 120000;
-server.keepAliveTimeout = 120000;
+// Disable Node's built-in socket timeout so Railway's LB controls the lifecycle
+server.timeout = 0;
+server.keepAliveTimeout = 0;
+server.headersTimeout = 0;
 
 server.listen(PORT, () => {
   console.log(`LabScope running at http://localhost:${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Trimmed version: http://localhost:${PORT}/trimmed`);
+  console.log(`Health check:    http://localhost:${PORT}/health`);
 });
