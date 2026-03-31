@@ -870,7 +870,8 @@
     <div class="legend-item"><div class="legend-dot" style="background:var(--solid-tumor)"></div>Solid Tumor (General)</div>
     <div class="legend-item"><div class="legend-dot" style="background:var(--breast-gi-lung)"></div>Solid Tumor (Breast/GI/Lung)</div>
     <div class="legend-item"><div class="legend-dot" style="background:var(--hematology)"></div>Hematology</div>
-    <div class="legend-item"><div class="legend-dot" style="background:var(--infectious)"></div>16S rRNA / Infectious Disease</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--infectious)"></div>16S rRNA</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e67e22"></div>Other Infectious Disease</div>
     <div class="legend-item"><div class="legend-dot" style="background:var(--ngs)"></div>NGS Platform</div>
   </div>
 
@@ -980,7 +981,8 @@
           <button class="filter-btn" data-filter="solid_tumor" onclick="applyFilter('solid_tumor',this)">SOLID TUMOR</button>
           <button class="filter-btn" data-filter="breast_gi_lung" onclick="applyFilter('breast_gi_lung',this)">BREAST/GI/LUNG</button>
           <button class="filter-btn" data-filter="hematology" onclick="applyFilter('hematology',this)">HEMATOLOGY</button>
-          <button class="filter-btn" data-filter="infectious" onclick="applyFilter('infectious',this)">16S/INFECTIOUS</button>
+          <button class="filter-btn" data-filter="infectious_16s" onclick="applyFilter('infectious_16s',this)">16S rRNA</button>
+          <button class="filter-btn" data-filter="infectious_other" onclick="applyFilter('infectious_other',this)">OTHER INFECTIOUS</button>
           <button class="filter-btn" data-filter="ngs" onclick="applyFilter('ngs',this)">NGS</button>
         </div>
         <button class="btn-export" onclick="exportResults()">⬇ Export Excel</button>
@@ -1197,69 +1199,77 @@ async function runPipeline(institutions, runBtn, stopBtn) {
     const inst = institutions[i];
     updateProgress(i, institutions.length);
 
-    // ---- PASS 1 ----
-    log(`[1/2] ${inst.name} — broad search…`, 'info');
-    const pass1 = await runWithRetry(
+    // ── A: Website search — capabilities, NGS, contacts ──────────────────
+    log(`[A] ${inst.name} — searching institution website…`, 'info');
+    const result = await runWithRetry(
       () => analyzeInstitution(inst.name, inst.location),
-      `${inst.name} pass 1`
+      `${inst.name}`
     );
 
-    if (!pass1) {
-      results.push({ ...inst, status: 'error', solid_tumor: false, breast_gi_lung: false, hematology: false, infectious: false, does_ngs: false, ngs_platform: '', contacts: [] });
+    if (!result) {
+      results.push({ ...inst, status: 'error', solid_tumor: false, breast_gi_lung: false,
+        hematology: false, infectious_16s: false, infectious_other: false,
+        does_ngs: false, ngs_platform: '', contacts: [] });
       updateProgress(i + 1, institutions.length);
       if (i < institutions.length - 1 && !stopRequested) await interruptibleSleep(5000);
       continue;
     }
-
-    // Show pass 1 result immediately so user sees progress
-    results.push({ ...inst, ...pass1, status: 'pass1' });
+    results.push({ ...inst, ...result, status: 'pass1' });
     renderResults();
-    log(`[1/2] ${inst.name} — pass 1 complete, starting deep search…`, 'ok');
+    log(`[A] ${inst.name} — complete`, 'ok');
 
-    if (stopRequested) break;
-
-    // Brief pause between passes
-    await interruptibleSleep(3000);
-
-    // ---- PASS 2 ----
-    log(`[2/2] ${inst.name} — targeted gap-fill search…`, 'info');
-    const pass2 = await runWithRetry(
-      () => refineInstitution(inst.name, inst.location, pass1),
-      `${inst.name} pass 2`
-    );
-
-    // Merge pass 2 into pass 1, preferring non-empty/non-N/A values from pass 2
-    const merged = mergeResults(pass1, pass2);
-
-    // Prospeo: fill any remaining missing emails after both AI passes
-    if (getProspeoKey()) {
-      const needsEnrichment = (merged.contacts || []).some(
-        ct => (!ct.email || ct.email === 'N/A') && ct.name && ct.name.toLowerCase() !== 'unknown' && ct.name.split(' ').length >= 2
+    // ── B: bioRxiv/PMC search (only if NGS found but platform unknown) ────
+    if (!stopRequested && result.does_ngs &&
+        (!result.ngs_platform || result.ngs_platform === 'Unknown' || result.ngs_platform === '')) {
+      log(`[B] ${inst.name} — NGS platform unknown, searching bioRxiv/PMC…`, 'info');
+      await interruptibleSleep(3000);
+      const ngsResult = await runWithRetry(
+        () => searchNgsPlatform(inst.name, inst.location),
+        `${inst.name} NGS`
       );
-      if (needsEnrichment) {
-        log(`📧 ${inst.name} — enriching missing emails via Prospeo…`, 'info');
-        merged.contacts = await enrichContactsWithProspeo(inst.name, merged.contacts || []);
+      if (ngsResult && ngsResult.ngs_platform && ngsResult.ngs_platform !== 'Unknown') {
+        result.ngs_platform = ngsResult.ngs_platform;
+        result.ngs_source   = ngsResult.ngs_source || 'bioRxiv/PMC';
+        log(`[B] ${inst.name} — platform found: ${result.ngs_platform}`, 'ok');
+      } else {
+        log(`[B] ${inst.name} — platform not found in papers`, 'info');
       }
     }
 
-    // Replace the pass1 entry in results with the merged final result
-    const idx = results.findIndex(r => r.name === inst.name && r.status === 'pass1');
-    if (idx !== -1) {
-      results[idx] = { ...inst, ...merged, status: 'done' };
-    } else {
-      results.push({ ...inst, ...merged, status: 'done' });
+    // ── C: Prospeo enrichment (only if key provided) ──────────────────────
+    if (!stopRequested && getProspeoKey() && (result.contacts || []).length > 0) {
+      const needsEnrichment = result.contacts.some(
+        ct => (!ct.email || ct.email === 'N/A') && ct.name &&
+              ct.name.toLowerCase() !== 'unknown' && ct.name.split(' ').length >= 2
+      );
+      if (needsEnrichment) {
+        log(`[C] ${inst.name} — enriching contacts via Prospeo…`, 'info');
+        result.contacts = await enrichContactsWithProspeo(inst.name, result.contacts);
+        const gotEmails = result.contacts.filter(ct => ct.email && ct.email !== 'N/A').length;
+        if (gotEmails === 0) {
+          log(`[C] ${inst.name} — no emails found, searching for additional contactable person…`, 'info');
+          const extra = await findContactableContact(inst.name, inst.location);
+          if (extra) {
+            result.contacts.push(extra);
+            log(`[C] ${inst.name} — added extra contact: ${extra.name}`, 'ok');
+          }
+        }
+      }
     }
 
-    log(`✓ ${inst.name} — complete (both passes)`, 'ok');
+    // Finalise result
+    const idx = results.findIndex(r => r.name === inst.name && r.status === 'pass1');
+    if (idx !== -1) results[idx] = { ...inst, ...result, status: 'done' };
+    else results.push({ ...inst, ...result, status: 'done' });
+
+    log(`✓ ${inst.name} — done`, 'ok');
     renderResults();
     updateProgress(i + 1, institutions.length);
 
-    // Pause between institutions
     if (i < institutions.length - 1 && !stopRequested) {
       await interruptibleSleep(15000);
     }
   }
-
   if (stopRequested) {
     log(`⏹ Stopped. ${results.length} institution(s) processed so far.`, 'warn');
   } else {
@@ -1379,123 +1389,153 @@ function getApiKey() {
   return manual || null; // when running in claude.ai, no key needed (injected by platform)
 }
 
-// ---- CLAUDE API CALL ----
+// ---- CLAUDE API CALL — STEP A ----
 async function analyzeInstitution(name, location) {
   const locationStr = location ? ` located in ${location}` : '';
-  const prompt = `You are a scientific research tool. Analyze the institution "${name}"${locationStr}.
-
-Use web search to research this institution. Limit yourself to a maximum of 6 targeted searches total — prioritise the institution's own website, then LinkedIn/directory pages for contacts, then PubMed for NGS platform. Do not search broadly; each search should have a clear specific goal.
-
-Determine:
-
-1. TESTING CAPABILITIES (answer true/false for each):
-   - solid_tumor_general: Does this lab/institution perform solid tumor testing (general oncology/pathology/molecular testing for tumors)?
-   - breast_gi_lung: Does this lab specifically perform testing for breast cancer, GI (gastrointestinal) cancer, or lung cancer?
-   - hematology: Does this lab perform hematology testing (blood cancers, leukemia, lymphoma, CBC, hematopathology)?
-   - infectious_16s: Does this lab perform ANY of the following: 16S rRNA sequencing, infectious disease testing, infectious disease molecular diagnostics, microbiology, virology, PCR-based pathogen detection, respiratory panels, STI testing, sepsis panels, or any other testing that identifies or characterizes infectious agents? Set to true if the lab performs ANY form of infectious disease diagnostics — the scope is intentionally broad.
-
-IMPORTANT — CONSISTENCY CHECK: Before finalising your JSON, re-read your testing_notes summary. If your summary mentions anything related to a category above, the corresponding boolean MUST be true. For example: if testing_notes mentions "infectious disease", "microbiology", "molecular diagnostics for pathogens", or similar — infectious must be true. If it mentions "oncology", "tumor", or "cancer testing" — solid_tumor must be true. Never leave a flag as false if your own summary contradicts it.
-
-2. NGS (Next Generation Sequencing):
-   - does_ngs: Does this lab perform next generation sequencing?
-   - ngs_platform: If yes, identify the specific instrument model(s) — not just the brand. Use ALL of the following search strategies:
-       a) Institution website: search "[institution name] sequencing platform", "[institution name] NGS", "[institution name] genomics core"
-       b) Published papers on PubMed: search "pubmed [institution name] next generation sequencing" or "pubmed [institution name] sequencing methods" — papers routinely name the exact instrument in their Methods section (e.g. "sequenced on an Illumina NovaSeq 6000", "using a PacBio Sequel IIe"). Check at least 2-3 recent papers.
-       c) Google Scholar or preprints: search "[institution name] sequencing site:biorxiv.org" or "[institution name] whole genome sequencing"
-     Specific models to look for: Illumina NovaSeq 6000/X, NextSeq 550/2000, MiSeq, HiSeq; PacBio Sequel II/IIe/Revio; Oxford Nanopore PromethION/MinION/GridION; Ion Torrent Genexus/S5; 10x Genomics Chromium; Element Biosciences AVITI; MGI DNBSEQ.
-     If multiple platforms are found, list all of them. If only the brand is found (e.g. "Illumina" without a model), state the brand. Say "Unknown" only after exhausting all search strategies above.
-
-3. CONTACTS: Search aggressively across multiple sources to find the most relevant contacts at this institution.
-
-   PRIORITY TITLES TO FIND (in order):
-   - "Lab Director" or "Laboratory Director" (always search for this first)
-   - "NGS Lead", "NGS Director", "Genomics Lead", or "Team Lead"
-   - If the lab performs infectious disease testing: "Infectious Disease Director" or "Director of Infectious Disease"
-   - If the lab performs pathology: "Chief of Pathology", "Chair of Pathology", or "Medical Director of Pathology"
-   - Then: other relevant roles such as Lab Manager, Research Director, Senior Scientist, Department Head
-
-   SEARCH STRATEGY — use ALL of the following sources:
-   a) Institution website: check "About", "Team", "Leadership", "Staff Directory", or "Contact" pages
-   b) LinkedIn: search "[institution name] Laboratory Director", "[institution name] NGS Lead", etc.
-   c) ZoomInfo: search "[institution name]" on zoominfo.com — it lists verified business contacts with emails and direct dials
-   d) Contact databases: also try rocketreach.co, apollo.io, and hunter.io for "[name] [institution]" to find verified email addresses
-   e) Published papers: authors from recent papers often list their institutional email in the correspondence section
-   f) Press releases and news articles mentioning staff names
-
-   EMAIL SOURCING: For each contact found, try to find their email via:
-   - ZoomInfo profile (most reliable for business emails)
-   - RocketReach or Apollo.io profile
-   - The institution's own published staff directory
-   - Pattern-matching from known institutional email formats (e.g. if one contact is john.doe@lab.com, try firstname.lastname@lab.com for others)
-   - Only mark email as "N/A" after trying all of the above
-
-   Also find the general laboratory phone number (main switchboard or lab line). Search "[institution name] phone", "[institution name] contact us", or check their website directly.
-
-Respond ONLY with valid JSON (no markdown, no backticks) in exactly this format:
-{
-  "solid_tumor": true or false,
-  "breast_gi_lung": true or false,
-  "hematology": true or false,
-  "infectious": true or false,
-  "does_ngs": true or false,
-  "ngs_platform": "string or empty string",
-  "ngs_source": "where NGS platform info was found, e.g. \'PubMed: Smith et al. 2023\' or \'institution website\' or \'N/A\'",
-  "testing_notes": "1-2 sentence summary of what this lab does",
-  "lab_phone": "general lab phone number or N/A",
-  "contacts": [
-    {
-      "name": "Full Name",
-      "title": "Job Title",
-      "email": "email@domain.com or N/A",
-      "phone": "phone number or N/A"
-    }
-  ],
-  "sources": ["url1", "url2"]
-}`;
-
-  // Auto-detect environment:
-  // - localhost → route through local proxy server at /api (avoids CORS, key held server-side)
-  // - elsewhere (claude.ai, hosted) → call Anthropic directly (key injected by platform or entered manually)
-  const manualKey = getApiKey();
-  // Routing logic:
-  // - If a manual API key is entered: call Anthropic directly (standalone use)
-  // - If served from our own server (localhost or Railway): use the /api proxy
-  // - Otherwise (e.g. inside claude.ai iframe): call Anthropic directly, key injected by platform
+  const manualKey   = getApiKey();
   const isOwnServer = window.location.hostname === 'localhost'
     || window.location.hostname === '127.0.0.1'
     || window.location.hostname.endsWith('.railway.app')
     || window.location.hostname.endsWith('.up.railway.app');
-  const apiUrl = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
-  const extraHeaders = manualKey ? { "x-api-key": manualKey } : {};
+  const apiUrl      = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
+  const extraHeaders = manualKey ? { 'x-api-key': manualKey } : {};
+
+  const prompt = `Research "${name}"${locationStr}. Search their website (About, Services, Test Menu, Team, Staff Directory, Contact pages).
+
+1. TESTING — answer true/false:
+   - solid_tumor: general solid tumor / oncology / molecular pathology testing
+   - breast_gi_lung: specifically breast, GI (gastrointestinal), or lung cancer testing
+   - hematology: blood cancers, CBC, hematopathology
+   - infectious_16s: specifically 16S rRNA sequencing
+   - infectious_other: other infectious disease / microbiology testing (PCR panels, virology, STI, sepsis, respiratory panels) — NOT including 16S rRNA
+
+   CONSISTENCY: re-read testing_notes before finalising. If it mentions any category above, that boolean must be true.
+
+2. NGS:
+   - does_ngs: true/false
+   - ngs_platform: search the institution website genomics/sequencing core page for the specific instrument model (e.g. Illumina NovaSeq 6000, PacBio Revio, Oxford Nanopore PromethION). Leave empty string if not found on website — a follow-up search will check bioRxiv/PMC.
+
+3. CONTACTS — search website for up to 3 contacts in this priority order:
+   1. Director or VP of Laboratory / Laboratory Services / Laboratory Operations
+   2. NGS Team Lead, Head of NGS, or NGS Technician
+   3. Chair or Chief of Pathology or Infectious Disease
+   Record name, title, and any phone/email listed directly on the site.
+   Also find the general lab phone number from their Contact page.
+   Only include contacts with real identified names — no Unknown or placeholder entries.
+
+Respond ONLY with valid JSON, no markdown, no backticks:
+{
+  "solid_tumor": false,
+  "breast_gi_lung": false,
+  "hematology": false,
+  "infectious_16s": false,
+  "infectious_other": false,
+  "does_ngs": false,
+  "ngs_platform": "",
+  "ngs_source": "",
+  "testing_notes": "1-2 sentence summary",
+  "lab_phone": "N/A",
+  "contacts": [
+    {"name": "Full Name", "title": "Job Title", "email": "N/A", "phone": "N/A"}
+  ],
+  "sources": ["url1"]
+}`;
 
   const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...extraHeaders },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }]
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }]
     })
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    const errPayload = err.error || err;
-    // Include HTTP status in the thrown error so it's visible in the log
-    throw new Error(JSON.stringify({ http_status: response.status, ...errPayload }));
+    throw new Error(JSON.stringify({ http_status: response.status, ...(err.error || err) }));
   }
 
   const rawText = await response.text();
   const data = JSON.parse(rawText.trim());
-
-  const fullText = data.content
-    .map(item => item.type === 'text' ? item.text : '')
-    .filter(Boolean)
-    .join('\n');
-
-  return await parseOrRetry(fullText, apiUrl, extraHeaders);
+  const fullText = (data.content || []).map(i => i.type === 'text' ? i.text : '').filter(Boolean).join('\n');
+  const clean = fullText.replace(/```json|```/g, '').trim();
+  const match = clean.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON in response');
+  return JSON.parse(match[0]);
 }
+
+// ---- STEP B: BIORXIV/PMC NGS PLATFORM SEARCH ----
+async function searchNgsPlatform(name, location) {
+  const locationStr  = location ? ` located in ${location}` : '';
+  const manualKey    = getApiKey();
+  const isOwnServer  = window.location.hostname === 'localhost'
+    || window.location.hostname === '127.0.0.1'
+    || window.location.hostname.endsWith('.railway.app')
+    || window.location.hostname.endsWith('.up.railway.app');
+  const apiUrl       = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
+  const extraHeaders = manualKey ? { 'x-api-key': manualKey } : {};
+
+  const prompt = `Search site:biorxiv.org and site:pmc.ncbi.nlm.nih.gov for papers from "${name}"${locationStr} that mention next generation sequencing. Find the exact instrument model in the Methods section (e.g. Illumina NovaSeq 6000, PacBio Revio, Oxford Nanopore PromethION). Respond ONLY with JSON: {"ngs_platform": "exact model or Unknown", "ngs_source": "paper title or URL where found"}`;
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 500,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  if (!response.ok) return null;
+  const rawText2 = await response.text();
+  const data2 = JSON.parse(rawText2.trim());
+  const text  = (data2.content || []).map(i => i.type === 'text' ? i.text : '').filter(Boolean).join('\n');
+  const match = text.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try { return JSON.parse(match[0]); } catch(_) { return null; }
+}
+
+// ---- STEP C: FIND ADDITIONAL CONTACTABLE PERSON (via web search) ----
+async function findContactableContact(name, location) {
+  if (!getProspeoKey()) return null;
+  const locationStr  = location ? ` in ${location}` : '';
+  const manualKey    = getApiKey();
+  const isOwnServer  = window.location.hostname === 'localhost'
+    || window.location.hostname === '127.0.0.1'
+    || window.location.hostname.endsWith('.railway.app')
+    || window.location.hostname.endsWith('.up.railway.app');
+  const apiUrl       = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
+  const extraHeaders = manualKey ? { 'x-api-key': manualKey } : {};
+
+  const prompt = `Find one person at "${name}"${locationStr} who has a publicly listed email address or direct phone number. Check their website, LinkedIn, or published papers. Priority: Lab Director, Operations Manager, Lab Manager, or any staff with listed contact info. Respond ONLY with JSON: {"name":"Full Name","title":"Job Title","email":"email or N/A","phone":"phone or N/A"}`;
+
+  try {
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 400,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if (!resp.ok) return null;
+    const rawText3 = await resp.text();
+    const data3    = JSON.parse(rawText3.trim());
+    const text3    = (data3.content || []).map(i => i.type === 'text' ? i.text : '').filter(Boolean).join('\n');
+    const match3   = text3.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/);
+    if (!match3) return null;
+    const contact  = JSON.parse(match3[0]);
+    if ((contact.email && contact.email !== 'N/A') || (contact.phone && contact.phone !== 'N/A')) return contact;
+  } catch(_) {}
+  return null;
+}
+
 
 // ---- JSON PARSE WITH RETRY ----
 async function parseOrRetry(fullText, apiUrl, extraHeaders) {
@@ -1544,159 +1584,6 @@ async function parseOrRetry(fullText, apiUrl, extraHeaders) {
   };
 }
 
-// ---- PASS 2: GAP-FILL SEARCH ----
-async function refineInstitution(name, location, prior) {
-  const locationStr = location ? ` located in ${location}` : '';
-
-  // Build a precise list of what's still missing from pass 1
-  const gaps = [];
-  if (!prior.ngs_platform || prior.ngs_platform === 'Unknown' || prior.ngs_platform === '') {
-    gaps.push('- NGS platform: not found yet. Search PubMed ("[institution] sequencing"), the institution website, and Google Scholar specifically for instrument model names (e.g. "Illumina NovaSeq", "PacBio", "Oxford Nanopore").');
-  }
-  const missingContactInfo = (prior.contacts || []).filter(c => c.email === 'N/A' || c.phone === 'N/A');
-  if (missingContactInfo.length > 0) {
-    const names = missingContactInfo.map(c => c.name).join(', ');
-    gaps.push(`- Missing emails/phones for: ${names}. Search ZoomInfo (zoominfo.com), RocketReach (rocketreach.co), Apollo.io, and hunter.io for each person. Also try LinkedIn and any published papers where they may have listed their institutional email.`);
-  }
-  if (!prior.lab_phone || prior.lab_phone === 'N/A') {
-    gaps.push('- General lab phone number: not found yet. Search "[institution name] phone", "[institution name] contact us", and check their website directly.');
-  }
-  const priorityTitles = ['laboratory director', 'lab director', 'ngs lead', 'ngs director', 'genomics lead', 'team lead', 'infectious disease director', 'chief of pathology', 'chair of pathology'];
-  const foundTitles = (prior.contacts || []).map(c => (c.title||'').toLowerCase());
-  const missingPriority = priorityTitles.filter(t => !foundTitles.some(f => f.includes(t.split(' ')[0]) && f.includes(t.split(' ').pop())));
-  if (missingPriority.length > 0) {
-    gaps.push(`- Priority contacts not yet found: ${missingPriority.join(', ')}. Search LinkedIn, ZoomInfo, and the institution website specifically for these roles.`);
-  }
-  if ((prior.contacts || []).length < 3) {
-    gaps.push('- Need more contacts: only ' + (prior.contacts||[]).length + ' found so far. Search ZoomInfo and LinkedIn for "[institution name] director" or "[institution name] lab manager".');
-  }
-
-  const gapText = gaps.length > 0
-    ? 'Focus especially on filling these specific gaps from the first search:\n' + gaps.join('\n')
-    : 'All fields were found in the first pass. Verify the information is accurate and look for any additional contacts or NGS platform details that may have been missed.';
-
-  const prompt = `You are a scientific research tool doing a SECOND, deeper search pass on the institution "${name}"${locationStr}.
-
-A first search already found this information:
-${JSON.stringify(prior, null, 2)}
-
-${gapText}
-
-Do additional targeted web searches to find anything missing or improvable above. For contacts specifically, focus on ZoomInfo, RocketReach, Apollo.io, LinkedIn, and the institution's own staff directory to find verified email addresses and direct phone numbers. Then return a COMPLETE updated record — include everything from the first pass plus any new findings.
-
-IMPORTANT — CONSISTENCY CHECK: Re-read your testing_notes. If it mentions infectious disease, microbiology, molecular diagnostics, oncology, tumor, cancer, hematology, or NGS — the corresponding boolean must be true.
-
-Respond ONLY with valid JSON (no markdown, no backticks) in exactly this format:
-{
-  "solid_tumor": true or false,
-  "breast_gi_lung": true or false,
-  "hematology": true or false,
-  "infectious": true or false,
-  "does_ngs": true or false,
-  "ngs_platform": "string or empty string",
-  "ngs_source": "where NGS platform info was found",
-  "testing_notes": "1-2 sentence summary",
-  "lab_phone": "general lab phone number or N/A",
-  "contacts": [
-    {
-      "name": "Full Name",
-      "title": "Job Title",
-      "email": "email@domain.com or N/A",
-      "phone": "phone number or N/A"
-    }
-  ],
-  "sources": ["url1", "url2"]
-}`;
-
-  const manualKey = getApiKey();
-  // Routing logic:
-  // - If a manual API key is entered: call Anthropic directly (standalone use)
-  // - If served from our own server (localhost or Railway): use the /api proxy
-  // - Otherwise (e.g. inside claude.ai iframe): call Anthropic directly, key injected by platform
-  const isOwnServer = window.location.hostname === 'localhost'
-    || window.location.hostname === '127.0.0.1'
-    || window.location.hostname.endsWith('.railway.app')
-    || window.location.hostname.endsWith('.up.railway.app');
-  const apiUrl = (isOwnServer && !manualKey) ? '/api' : 'https://api.anthropic.com/v1/messages';
-  const extraHeaders = manualKey ? { "x-api-key": manualKey } : {};
-
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...extraHeaders },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(JSON.stringify(err.error || err));
-  }
-
-  const rawText2 = await response.text();
-  const data = JSON.parse(rawText2.trim());
-  const fullText = data.content.map(item => item.type === 'text' ? item.text : '').filter(Boolean).join('\n');
-
-  return await parseOrRetry(fullText, apiUrl, extraHeaders);
-}
-
-// ---- MERGE PASS 1 + PASS 2 ----
-function mergeResults(pass1, pass2) {
-  if (!pass2) return pass1;
-
-  // For booleans: true wins (if either pass found it, it's true)
-  const merged = {
-    solid_tumor:   pass1.solid_tumor   || pass2.solid_tumor,
-    breast_gi_lung: pass1.breast_gi_lung || pass2.breast_gi_lung,
-    hematology:    pass1.hematology    || pass2.hematology,
-    infectious:    pass1.infectious    || pass2.infectious,
-    does_ngs:      pass1.does_ngs      || pass2.does_ngs,
-    // For strings: prefer pass2 if it's more informative than pass1
-    ngs_platform:  betterString(pass1.ngs_platform, pass2.ngs_platform),
-    ngs_source:    betterString(pass1.ngs_source,   pass2.ngs_source),
-    testing_notes: betterString(pass1.testing_notes, pass2.testing_notes),
-    lab_phone:     betterString(pass1.lab_phone,     pass2.lab_phone),
-    sources:       mergeArrayUnique(pass1.sources || [], pass2.sources || []),
-    // For contacts: merge by name, filling in missing fields from each pass
-    contacts:      mergeContacts(pass1.contacts || [], pass2.contacts || []),
-  };
-  return merged;
-}
-
-function betterString(a, b) {
-  const isBlank = s => !s || s === 'N/A' || s === 'Unknown' || s.trim() === '';
-  if (isBlank(a) && !isBlank(b)) return b;
-  if (!isBlank(a) && isBlank(b)) return a;
-  // Both have values — prefer the longer/more detailed one
-  if (!isBlank(a) && !isBlank(b)) return b.length >= a.length ? b : a;
-  return a || b || '';
-}
-
-function mergeArrayUnique(a, b) {
-  return [...new Set([...a, ...b])];
-}
-
-function mergeContacts(contacts1, contacts2) {
-  const merged = [...contacts1];
-  for (const c2 of contacts2) {
-    const existing = merged.find(c1 =>
-      c1.name && c2.name && c1.name.toLowerCase() === c2.name.toLowerCase()
-    );
-    if (existing) {
-      // Fill in missing fields from pass 2
-      if (!existing.email || existing.email === 'N/A') existing.email = c2.email;
-      if (!existing.phone || existing.phone === 'N/A') existing.phone = c2.phone;
-      if (!existing.title || existing.title === 'N/A') existing.title = c2.title;
-    } else {
-      merged.push(c2); // new contact found in pass 2
-    }
-  }
-  return merged;
-}
-
 // ---- RENDER RESULTS ----
 function renderResults() {
   document.getElementById('resultsSection').classList.add('visible');
@@ -1709,7 +1596,8 @@ function renderStats() {
   const st = results.filter(r => r.solid_tumor).length;
   const bgl = results.filter(r => r.breast_gi_lung).length;
   const hem = results.filter(r => r.hematology).length;
-  const inf = results.filter(r => r.infectious).length;
+  const inf16s = results.filter(r => r.infectious_16s).length;
+  const infOther = results.filter(r => r.infectious_other).length;
   const ngs = results.filter(r => r.does_ngs).length;
 
   document.getElementById('statsBar').innerHTML = `
@@ -1717,7 +1605,8 @@ function renderStats() {
     <div class="stat-cell"><div class="stat-num" style="color:var(--solid-tumor)">${st}</div><div class="stat-label">Solid Tumor<br>General</div></div>
     <div class="stat-cell"><div class="stat-num" style="color:var(--breast-gi-lung)">${bgl}</div><div class="stat-label">Breast / GI<br>/ Lung</div></div>
     <div class="stat-cell"><div class="stat-num" style="color:var(--hematology)">${hem}</div><div class="stat-label">Hematology</div></div>
-    <div class="stat-cell"><div class="stat-num" style="color:var(--infectious)">${inf}</div><div class="stat-label">16S rRNA /<br>Infectious</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:var(--infectious)">${inf16s}</div><div class="stat-label">16S rRNA</div></div>
+    <div class="stat-cell"><div class="stat-num" style="color:#e67e22">${infOther}</div><div class="stat-label">Other<br>Infectious</div></div>
     <div class="stat-cell"><div class="stat-num" style="color:var(--ngs)">${ngs}</div><div class="stat-label">NGS<br>Confirmed</div></div>
   `;
 
@@ -1731,7 +1620,8 @@ function renderCards() {
   if (currentFilter === 'solid_tumor') filtered = results.filter(r => r.solid_tumor);
   else if (currentFilter === 'breast_gi_lung') filtered = results.filter(r => r.breast_gi_lung);
   else if (currentFilter === 'hematology') filtered = results.filter(r => r.hematology);
-  else if (currentFilter === 'infectious') filtered = results.filter(r => r.infectious);
+  else if (currentFilter === 'infectious_16s') filtered = results.filter(r => r.infectious_16s);
+  else if (currentFilter === 'infectious_other') filtered = results.filter(r => r.infectious_other);
   else if (currentFilter === 'ngs') filtered = results.filter(r => r.does_ngs);
 
   if (filtered.length === 0) {
@@ -1743,13 +1633,14 @@ function renderCards() {
 }
 
 function buildCard(r, idx) {
-  const hasResults = r.solid_tumor || r.breast_gi_lung || r.hematology || r.infectious || r.does_ngs;
+  const hasResults = r.solid_tumor || r.breast_gi_lung || r.hematology || r.infectious_16s || r.infectious_other || r.does_ngs;
 
   const tags = [];
   if (r.solid_tumor) tags.push(`<span class="tag tag-solid-tumor"><span class="tag-dot"></span>Solid Tumor (General)</span>`);
   if (r.breast_gi_lung) tags.push(`<span class="tag tag-breast-gi-lung"><span class="tag-dot"></span>Breast / GI / Lung</span>`);
   if (r.hematology) tags.push(`<span class="tag tag-hematology"><span class="tag-dot"></span>Hematology</span>`);
-  if (r.infectious) tags.push(`<span class="tag tag-infectious"><span class="tag-dot"></span>16S rRNA / Infectious Disease</span>`);
+  if (r.infectious_16s) tags.push(`<span class="tag tag-infectious"><span class="tag-dot"></span>16S rRNA</span>`);
+  if (r.infectious_other) tags.push(`<span class="tag" style="background:rgba(230,126,34,0.08);border-color:rgba(230,126,34,0.3);color:#e67e22;"><span class="tag-dot" style="background:#e67e22;"></span>Other Infectious Disease</span>`);
 
   const contacts = (r.contacts || []).slice(0, 5);
 
@@ -1835,7 +1726,7 @@ function applyFilter(filter, btn) {
 function exportResults() {
   if (!results.length) return;
 
-  const rows = [['Institution', 'Location', 'Solid Tumor (General)', 'Breast/GI/Lung', 'Hematology', '16S/Infectious', 'NGS', 'NGS Platform', 'NGS Platform Source', 'Testing Notes', 'Lab Phone', 'Contact 1 Name', 'Contact 1 Title', 'Contact 1 Email', 'Contact 1 Phone', 'Contact 2 Name', 'Contact 2 Title', 'Contact 2 Email', 'Contact 2 Phone', 'Contact 3 Name', 'Contact 3 Title', 'Contact 3 Email', 'Contact 3 Phone']];
+  const rows = [['Institution', 'Location', 'Solid Tumor (General)', 'Breast/GI/Lung', 'Hematology', '16S rRNA', 'Other Infectious Disease', 'NGS', 'NGS Platform', 'NGS Platform Source', 'Testing Notes', 'Lab Phone', 'Contact 1 Name', 'Contact 1 Title', 'Contact 1 Email', 'Contact 1 Phone', 'Contact 2 Name', 'Contact 2 Title', 'Contact 2 Email', 'Contact 2 Phone', 'Contact 3 Name', 'Contact 3 Title', 'Contact 3 Email', 'Contact 3 Phone']];
   results.forEach(r => {
     const ct = r.contacts || [];
     rows.push([
@@ -1843,7 +1734,8 @@ function exportResults() {
       r.solid_tumor ? 'Yes' : 'No',
       r.breast_gi_lung ? 'Yes' : 'No',
       r.hematology ? 'Yes' : 'No',
-      r.infectious ? 'Yes' : 'No',
+      r.infectious_16s ? 'Yes' : 'No',
+      r.infectious_other ? 'Yes' : 'No',
       r.does_ngs ? 'Yes' : 'No',
       r.ngs_platform || '',
       r.ngs_source || '',
